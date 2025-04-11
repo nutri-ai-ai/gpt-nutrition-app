@@ -1,0 +1,10 @@
+/* 예시: 카드 hover 효과 */
+.card:hover {
+    transform: scale(1.05);
+    transition: transform 0.3s ease;
+  }
+  
+  button {
+    cursor: pointer;
+  }
+  
