@@ -6,6 +6,7 @@ import { doc, getDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { motion } from 'framer-motion'
 import { FaComments } from 'react-icons/fa'  // AI 채팅 아이콘 추가
+import Slider from 'react-slick'  // react-slick import 추가
 
 export default function DashboardPage() {
   const router = useRouter()
@@ -88,6 +89,43 @@ export default function DashboardPage() {
     )
   }
 
+  const settings = {
+    dots: true,
+    infinite: true,
+    speed: 500,
+    slidesToShow: 1,
+    slidesToScroll: 1,
+    arrows: true,
+  };
+
+  const sampleSupplements = [
+    {
+      name: "오메가3",
+      description: "오메가-3 지방산은 심혈관계 및 뇌기능 인지, 항염증 작용을 해요",
+      image: "https://via.placeholder.com/150"
+    },
+    {
+      name: "비타민C",
+      description: "비타민C는 면역력 증진과 피부 건강에 도움을 줍니다.",
+      image: "https://via.placeholder.com/150"
+    },
+    {
+      name: "아연",
+      description: "아연은 면역 기능 및 세포 성장에 중요한 미네랄이에요.",
+      image: "https://via.placeholder.com/150"
+    },
+    {
+      name: "프로바이오틱스",
+      description: "장 건강을 개선하고 면역력을 강화하는 유산균입니다.",
+      image: "https://via.placeholder.com/150"
+    },
+    {
+      name: "마그네슘",
+      description: "마그네슘은 근육 기능과 신경 건강에 중요한 역할을 해요.",
+      image: "https://via.placeholder.com/150"
+    }
+  ];
+
   return (
     <main className="min-h-screen bg-gray-50 p-4 md:p-8">
       <motion.div
@@ -102,7 +140,7 @@ export default function DashboardPage() {
           <p className="text-gray-600 mt-2 text-sm">당신의 건강을 위한 맞춤형 루틴을 준비했어요 ✨</p>
         </section>
 
-        {/* AI 추천 카드 */}
+        {/* 오늘의 추천 영양제 슬라이드 */}
         <section className="bg-white rounded-xl shadow p-6 border border-gray-200">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-semibold text-gray-800">오늘의 추천 영양제</h2>
@@ -114,23 +152,20 @@ export default function DashboardPage() {
               AI 채팅하러 가기
             </button>
           </div>
-          {userData.recommendedSupplements && userData.recommendedSupplements.length > 0 ? (
-            <div className="space-y-4">
-              {userData.recommendedSupplements.map((supp: any, index: number) => (
-                <div key={index} className="flex items-center gap-4">
-                  <div className="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center overflow-hidden">
-                    <img src={supp.image} alt={supp.name} className="w-12 h-12 object-cover" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-gray-900">{supp.name}</p>
-                    <p className="text-xs text-gray-500">{supp.description}</p>
-                  </div>
+
+          <Slider {...settings}>
+            {sampleSupplements.map((supp, index) => (
+              <div key={index} className="flex items-center gap-4 p-4 bg-gray-100 rounded-lg">
+                <div className="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center overflow-hidden">
+                  <img src={supp.image} alt={supp.name} className="w-12 h-12 object-cover" />
                 </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-gray-500 text-sm">아직 추천된 영양제가 없어요. AI와 상담해보세요!</p>
-          )}
+                <div>
+                  <p className="text-sm font-semibold text-gray-900">{supp.name}</p>
+                  <p className="text-xs text-gray-500">{supp.description}</p>
+                </div>
+              </div>
+            ))}
+          </Slider>
         </section>
 
         {/* 내 정보 카드 */}
@@ -150,7 +185,10 @@ export default function DashboardPage() {
         {/* 빠른 메뉴 */}
         <section className="space-y-3">
           <h2 className="text-xl font-semibold text-gray-800">빠른 이동</h2>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-5">
+            <button onClick={() => router.push('/chat')} className="bg-purple-100 text-purple-800 py-3 rounded-lg font-medium hover:bg-purple-200">
+              AI 건강 상담하기
+            </button>
             <button onClick={() => router.push('/health-records')} className="bg-purple-100 text-purple-800 py-3 rounded-lg font-medium hover:bg-purple-200">
               건강 기록
             </button>
