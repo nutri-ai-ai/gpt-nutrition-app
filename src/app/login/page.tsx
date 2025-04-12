@@ -53,21 +53,31 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
+    <main className="min-h-screen bg-white flex items-center justify-center px-4">  {/* 배경을 하얗게 수정 */}
       <div className="w-full max-w-md bg-white rounded-lg shadow-lg p-8">
-        <h1 className="text-2xl font-bold mb-6 text-center text-blue-700">로그인</h1>
-        <form onSubmit={handleLogin} className="space-y-4">
+        <div className="flex justify-center mb-6">
+          {/* 로고 이미지 */}
+          <img src="/path/to/logo.png" alt="NUTRI AI 로고" className="w-24 h-24 object-cover" />
+        </div>
+        
+        <h1 className="text-2xl font-bold text-blue-700 text-center mb-4">
+          NUTRI AI에 오신 걸 환영합니다!
+        </h1>
+
+        <form onSubmit={handleLogin} className="space-y-6">
           <div className="flex flex-col">
-            <label className="text-sm font-medium text-gray-700">ID</label>
+            <label className="text-sm font-medium text-gray-700">아이디</label>
             <input
               type="text"
               name="id"
               value={form.id}
               onChange={handleChange}
-              className="px-3 py-2 border border-gray-300 rounded-md"
+              className="px-4 py-2 border border-gray-300 rounded-md"
+              placeholder="이메일 주소"
               required
             />
           </div>
+
           <div className="flex flex-col">
             <label className="text-sm font-medium text-gray-700">비밀번호</label>
             <input
@@ -75,12 +85,18 @@ export default function LoginPage() {
               name="password"
               value={form.password}
               onChange={handleChange}
-              className="px-3 py-2 border border-gray-300 rounded-md"
+              className="px-4 py-2 border border-gray-300 rounded-md"
+              placeholder="비밀번호"
               required
             />
           </div>
 
-          <button type="submit" className="w-full mt-4 bg-blue-600 text-white font-semibold py-2 rounded hover:bg-blue-700 transition">
+          <div className="flex justify-between text-sm">
+          <a href="#" onClick={() => router.push('/forgot-password')} className="text-blue-600 hover:text-blue-700">비밀번호를 잊으셨나요?</a>
+            <a href="#" onClick={() => router.push('/signup')} className="text-blue-600 hover:text-blue-700">회원가입</a>
+          </div>
+
+          <button type="submit" className="w-full mt-6 bg-blue-600 text-white font-semibold py-2 rounded-lg hover:bg-blue-700 transition">
             로그인
           </button>
         </form>
