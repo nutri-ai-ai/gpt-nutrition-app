@@ -11,13 +11,8 @@ export default function Home() {
   <div className="w-full max-w-md flex flex-col items-center text-center space-y-8">
     {/* 로고 및 환영 메시지 */}
     <br/>
-    <br/>
-    <br/>
-    <br/>
-    <br/>
-    <br/>
-    <br/>
-    <br/>
+
+
     <div className="flex flex-col items-start w-full space-y-4">
       <img
         src="/path/to/logo.png"  // 실제 로고 파일 경로로 교체해주세요
@@ -30,10 +25,7 @@ export default function Home() {
         오신 걸 환영합니다!
       </h1>
     </div>
-    <br/>
-    <br/>
-    <br/>
-    <br/>
+
 
     {/* 설명 텍스트 */}
     <p className="text-gray-600 text-lg leading-relaxed">
@@ -41,12 +33,12 @@ export default function Home() {
       사용자의 건강 데이터를 바탕으로 <br />
       <span className="text-blue-600 font-semibold">맞춤형 영양 루틴</span>을 설계해드려요.
       <br/>
-      <br/>
-      <br/>
-      <br/>
-      <br/>
-      <br/>
-      <br/>
+    <br/>
+    <br/>
+    <br/>
+    <br/>
+    <br/>
+ 
   
     </p>
 
