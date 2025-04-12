@@ -27,7 +27,7 @@ function IntroContent() {
       setTimeout(() => setStep(3), 2500),  // "건강관리를 시작할게요"
       setTimeout(() => setStep(4), 4000),  // 사라짐
       setTimeout(() => {
-        router.push(`/dashboard`);
+        router.push(`/chat`);
       }, 4500),
     ];
 
