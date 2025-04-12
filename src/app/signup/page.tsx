@@ -130,7 +130,7 @@ export default function SignupPage() {
       const uid = form.username
       await setDoc(doc(db, 'users', uid), { ...form, phone: phoneWithCountryCode })
       alert('회원가입 완료! ✅')
-      router.push(`/chat?name=${encodeURIComponent(form.name)}`)
+      router.push(`/`)
     } catch (err) {
       alert('회원정보 저장 실패')
       console.error(err)
@@ -416,6 +416,28 @@ export default function SignupPage() {
               placeholder="예: 오메가3, 비타민C 등"
               className="w-2/3 px-3 py-2 border border-gray-300 rounded-md"
             />
+          </div>
+          
+          <div className="flex justify-between items-center">
+           <label className="text-sm font-medium text-gray-700 w-1/3">건강 목표</label>
+           <select
+             name="healthGoal"
+             value={form.healthGoal}
+             onChange={handleChange}
+             className="w-2/3 px-3 py-2 border border-gray-300 rounded-md"
+  >
+             <option value="">선택</option>
+             <option value="종합 관리">종합 관리</option>
+             <option value="근육 증가">근육 증가</option>
+             <option value="에너지 향상">에너지 향상</option>
+             <option value="면역력 강화">면역력 강화</option>
+             <option value="체중 감량">체중 감량</option>
+             <option value="성장기 키성장">성장기 키성장</option>
+             <option value="피부개선">피부개선</option>
+             <option value="갱년기">갱년기</option>
+             <option value="피로감 개선">피로감 개선</option>
+             <option value="뇌건강 관리">뇌건강 관리</option>
+           </select>
           </div>
 
           <div className="flex justify-between items-center">
