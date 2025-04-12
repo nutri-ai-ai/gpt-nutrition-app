@@ -1,11 +1,19 @@
 {
   "hosting": {
-    "public": "out",
+    "public": ".",
     "ignore": [
       "firebase.json",
-  "**/.*",
-  "**/node_modules/**",
-  ".next/**",         
-  "public/**"      ]
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "function": "nextApp"
+      }
+    ]
+  },
+  "functions": {
+    "source": "functions"
   }
 }
