@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { doc, getDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { motion } from 'framer-motion'
+import { FaComments } from 'react-icons/fa'  // AI 채팅 아이콘 추가
 
 export default function DashboardPage() {
   const router = useRouter()
@@ -13,24 +14,63 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const storedUsername = localStorage.getItem('username')
+    // 로컬스토리지에서 username 확인
     if (!storedUsername) {
-      router.push('/login')
+      router.push('/login')  // username 없으면 로그인 페이지로 리디렉션
       return
     }
-    getDoc(doc(db, 'users', storedUsername))
-      .then((docSnapshot) => {
+
+    // Firestore에서 사용자 데이터 조회
+    const getUserData = async () => {
+      try {
+        const docRef = doc(db, 'users', storedUsername)
+        const docSnapshot = await getDoc(docRef)
+
+        // 사용자가 존재하지 않으면 로그인 페이지로 리디렉션
         if (docSnapshot.exists()) {
           setUserData(docSnapshot.data())
         } else {
-          console.error('해당 사용자 데이터가 Firestore에 없습니다.')
+          console.error('사용자 데이터가 존재하지 않습니다.')
+          router.push('/login')  // 데이터가 없다면 로그인 페이지로 리디렉션
         }
-        setLoading(false)
-      })
-      .catch((err) => {
-        console.error('사용자 데이터 로드 실패:', err)
-        setLoading(false)
-      })
+      } catch (err) {
+        console.error('사용자 데이터 로드 오류:', err)
+        router.push('/login')  // 오류 발생 시 로그인 페이지로 리디렉션
+      }
+      setLoading(false)
+    }
+
+    getUserData()
   }, [router])
+
+  // 로그아웃 처리
+  const handleLogout = () => {
+    localStorage.removeItem('username')
+    localStorage.removeItem('password')
+    router.push('/login')  // 로그아웃 후 로그인 페이지로 리디렉션
+  }
+
+  // 구독 상태 및 만료일 처리
+  const getSubscriptionStatus = () => {
+    if (userData.subscriptionStatus && userData.subscriptionDate) {
+      const subscriptionEndDate = new Date(userData.subscriptionDate)
+      const currentDate = new Date()
+      const daysLeft = Math.floor((subscriptionEndDate.getTime() - currentDate.getTime()) / (1000 * 3600 * 24))
+
+      if (daysLeft <= 7) {
+        // 구독 만료 7일 전부터 빨간색으로 표시
+        return (
+          <p className="text-red-600 font-semibold">구독 만료일: {subscriptionEndDate.toLocaleDateString()} (남은 일: {daysLeft}일)</p>
+        )
+      } else {
+        return (
+          <p className="text-green-600 font-semibold">구독 상태: {userData.subscriptionStatus} (구독기간: {subscriptionEndDate.toLocaleDateString()})</p>
+        )
+      }
+    } else {
+      return <p className="text-gray-500">구독 상태: 미구독</p>
+    }
+  }
 
   if (loading) {
     return (
@@ -68,8 +108,9 @@ export default function DashboardPage() {
             <h2 className="text-xl font-semibold text-gray-800">오늘의 추천 영양제</h2>
             <button
               onClick={() => router.push('/chat')}
-              className="text-sm text-blue-600 hover:underline"
+              className="flex items-center text-white bg-blue-600 hover:bg-blue-700 py-2 px-4 rounded-lg transition"
             >
+              <FaComments className="mr-2" />
               AI 채팅하러 가기
             </button>
           </div>
@@ -97,7 +138,7 @@ export default function DashboardPage() {
           <h2 className="text-xl font-semibold mb-4 text-gray-800">내 정보</h2>
           <p className="mb-2"><span className="font-semibold text-gray-700">이름:</span> {userData.name}</p>
           <p className="mb-2"><span className="font-semibold text-gray-700">이메일:</span> {userData.email}</p>
-          <p className="mb-2"><span className="font-semibold text-gray-700">구독 상태:</span> {userData.subscriptionStatus || '미구독'}</p>
+          {getSubscriptionStatus()}
           <button
             onClick={() => router.push('/membership-info')}
             className="mt-4 w-full py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
@@ -123,6 +164,16 @@ export default function DashboardPage() {
               구독 관리
             </button>
           </div>
+        </section>
+
+        {/* 로그아웃 버튼 - 건강 팁 바로 위에 위치 */}
+        <section className="text-center">
+          <button
+            onClick={handleLogout}
+            className="w-full py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+          >
+            로그아웃
+          </button>
         </section>
 
         {/* 건강 팁 */}

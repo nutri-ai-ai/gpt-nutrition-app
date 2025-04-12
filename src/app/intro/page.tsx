@@ -9,32 +9,37 @@ import { useEffect, useState } from "react";
 
 // 실제 로직을 담당하는 클라이언트 컴포넌트
 function IntroContent() {
-  const searchParams = useSearchParams();
   const router = useRouter();
-  const name = searchParams.get("name") || "사용자";
-
+  const [name, setName] = useState<string | null>(null);  // 사용자의 이름을 저장
   const [step, setStep] = useState(0);
 
   useEffect(() => {
+    const storedUsername = localStorage.getItem("username");
+    if (!storedUsername) {
+      router.push('/login'); // 로그인되지 않은 경우 로그인 페이지로 리디렉션
+    } else {
+      setName(storedUsername);  // 로그인된 사용자 이름을 설정
+    }
+
     const timers = [
       setTimeout(() => setStep(1), 500),   // "다시 오셨네요"
       setTimeout(() => setStep(2), 2000),  // 사라짐
       setTimeout(() => setStep(3), 2500),  // "건강관리를 시작할게요"
       setTimeout(() => setStep(4), 4000),  // 사라짐
       setTimeout(() => {
-        router.push(`/chat?name=${encodeURIComponent(name)}`);
+        router.push(`/dashboard`);
       }, 4500),
     ];
 
     return () => timers.forEach(clearTimeout);
-  }, [name, router]);
+  }, [router]);
 
   return (
     <main className="min-h-screen flex items-center justify-center bg-white">
       <div className="text-2xl font-semibold text-gray-800 transition-opacity duration-3000 ease-in-out">
         {step === 1 && (
           <p className="opacity-100 animate-fade-in-out">
-            {name}님, 다시 오셨네요
+            {name ? `${name}님, 다시 오셨네요` : '사용자님, 다시 오셨네요'}
           </p>
         )}
         {step === 3 && (
