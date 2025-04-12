@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { doc, setDoc } from 'firebase/firestore'
+import { doc, setDoc, collection, query, where, getDocs } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { auth } from '@/lib/firebase'
 import {
@@ -20,7 +20,7 @@ export default function SignupPage() {
     username: '', // 이 값이 Firestore의 문서 ID로 사용됨 (즉, 로그인 시 ID)
     password: '',
     email: '',
-    phone: '',
+    phone: ['', '', ''],  // 전화번호를 3개의 칸으로 나누어 저장
     otp: '',
     verified: false,
     gender: '',
@@ -39,9 +39,12 @@ export default function SignupPage() {
     sleepQuality: '',       // 수면의 질
     healthGoal: '',         // 건강 목표 (예: 체중 감량, 근육 증가 등)
     allergies: '',          // 알레르기 정보
+    supplements: '',        // 영양제 섭취 여부
+    medicalHistory: '',     // 기타 질병 이력
   })
 
   const [verificationId, setVerificationId] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
 
   useEffect(() => {
     if (!(window as any).recaptchaVerifier) {
@@ -54,20 +57,32 @@ export default function SignupPage() {
     }
   }, [])
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>, index?: number) => {
     const { name, value } = e.target
-    setForm(prev => ({ ...prev, [name]: value }))
+
+    // 전화번호를 3개의 칸으로 나누어 입력 처리
+    if (name === "phone") {
+      const updatedPhone = [...form.phone];
+      updatedPhone[index!] = value.replace(/[^0-9]/g, '');  // 숫자만 입력 가능
+      setForm(prev => ({ ...prev, phone: updatedPhone }));
+    } else {
+      setForm(prev => ({ ...prev, [name]: value }));
+    }
   }
 
   const sendOTP = async () => {
     try {
+      setIsLoading(true)
       const appVerifier = (window as any).recaptchaVerifier
-      const confirmation = await signInWithPhoneNumber(auth, form.phone, appVerifier)
+      const phoneNumber = `+82${form.phone.join('')}`;  // 한국 번호는 자동으로 +82를 붙여서 처리
+      const confirmation = await signInWithPhoneNumber(auth, phoneNumber, appVerifier)
       setVerificationId(confirmation.verificationId)
       alert('인증번호가 전송되었습니다.')
     } catch (err) {
       alert('인증번호 전송 실패')
       console.error(err)
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -83,18 +98,37 @@ export default function SignupPage() {
     }
   }
 
+  const checkDuplicate = async () => {
+    const userRef = collection(db, 'users')
+    const q1 = query(userRef, where('username', '==', form.username))
+    const q2 = query(userRef, where('email', '==', form.email))
+    const snapshot1 = await getDocs(q1)
+    const snapshot2 = await getDocs(q2)
+
+    if (!snapshot1.empty) {
+      alert('아이디가 이미 존재합니다!')
+      return false
+    }
+    if (!snapshot2.empty) {
+      alert('이메일이 이미 존재합니다!')
+      return false
+    }
+    return true
+  }
+
   const handleSubmit = async () => {
-    // 필수 항목 체크 (이름, 아이디, 휴대폰, 인증여부)
     if (!form.name || !form.username || !form.phone || !form.verified) {
       alert('이름, 아이디, 휴대폰 및 휴대폰 인증은 필수입니다!')
       return
     }
 
+    const isUnique = await checkDuplicate()
+    if (!isUnique) return
+
     try {
-      // 회원가입 시 Firestore 'users' 컬렉션의 문서 ID로
-      // 사용자가 입력한 아이디(username)를 사용 (로그인 시에도 동일하게 사용)
+      const phoneWithCountryCode = `+82${form.phone.join('')}`  // +82를 자동으로 추가
       const uid = form.username
-      await setDoc(doc(db, 'users', uid), form)
+      await setDoc(doc(db, 'users', uid), { ...form, phone: phoneWithCountryCode })
       alert('회원가입 완료! ✅')
       router.push(`/chat?name=${encodeURIComponent(form.name)}`)
     } catch (err) {
@@ -107,88 +141,116 @@ export default function SignupPage() {
     <main className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
       <div className="w-full max-w-3xl bg-white rounded-lg shadow-lg p-8">
         <h1 className="text-3xl font-bold mb-6 text-center text-blue-700">회원가입</h1>
-        
+
         {/* 개인 기본 정보 */}
         <div className="space-y-4">
           <div className="flex justify-between items-center">
             <label className="text-sm font-medium text-gray-700 w-1/3">이름 *</label>
-            <input 
-              type="text" 
-              name="name" 
-              value={form.name} 
-              onChange={handleChange} 
-              className="w-2/3 px-3 py-2 border border-gray-300 rounded-md" 
+            <input
+              type="text"
+              name="name"
+              value={form.name}
+              onChange={handleChange}
+              className="w-2/3 px-3 py-2 border border-gray-300 rounded-md"
+            />
+          </div>
+
+          {/* 아이디, 비밀번호, 이메일, 전화번호 */}
+          <div className="flex justify-between items-center">
+            <label className="text-sm font-medium text-gray-700 w-1/3">아이디 *</label>
+            <input
+              type="text"
+              name="username"
+              value={form.username}
+              onChange={handleChange}
+              className="w-2/3 px-3 py-2 border border-gray-300 rounded-md"
+            />
+          </div>
+          <div className="flex justify-between items-center">
+            <label className="text-sm font-medium text-gray-700 w-1/3">비밀번호 *</label>
+            <input
+              type="password"
+              name="password"
+              value={form.password}
+              onChange={handleChange}
+              className="w-2/3 px-3 py-2 border border-gray-300 rounded-md"
+            />
+          </div>
+          <div className="flex justify-between items-center">
+            <label className="text-sm font-medium text-gray-700 w-1/3">이메일 *</label>
+            <input
+              type="email"
+              name="email"
+              value={form.email}
+              onChange={handleChange}
+              className="w-2/3 px-3 py-2 border border-gray-300 rounded-md"
             />
           </div>
 
           <div className="flex justify-between items-center">
-            <label className="text-sm font-medium text-gray-700 w-1/3">아이디 *</label>
-            <input 
-              type="text" 
-              name="username" 
-              value={form.username} 
-              onChange={handleChange} 
-              className="w-2/3 px-3 py-2 border border-gray-300 rounded-md" 
-            />
-          </div>
-          
-          <div className="flex justify-between items-center">
-            <label className="text-sm font-medium text-gray-700 w-1/3">비밀번호 *</label>
-            <input 
-              type="password" 
-              name="password" 
-              value={form.password} 
-              onChange={handleChange} 
-              className="w-2/3 px-3 py-2 border border-gray-300 rounded-md" 
-            />
-          </div>
-          
-          <div className="flex justify-between items-center">
-            <label className="text-sm font-medium text-gray-700 w-1/3">이메일 *</label>
-            <input 
-              type="email" 
-              name="email" 
-              value={form.email} 
-              onChange={handleChange} 
-              className="w-2/3 px-3 py-2 border border-gray-300 rounded-md" 
-            />
-          </div>
-          
-          <div className="flex justify-between items-center">
             <label className="text-sm font-medium text-gray-700 w-1/3">휴대폰 *</label>
-            <input 
-              type="tel" 
-              name="phone" 
-              value={form.phone} 
-              onChange={handleChange} 
-              className="w-2/3 px-3 py-2 border border-gray-300 rounded-md" 
-            />
+            <div className="flex gap-2 w-2/3">
+              <input
+                type="tel"
+                name="phone"
+                value={form.phone[0]}
+                onChange={(e) => handleChange(e, 0)}
+                className="w-1/3 px-3 py-2 border border-gray-300 rounded-md"
+                maxLength={3}
+                placeholder="010"
+              />
+              <span>-</span>
+              <input
+                type="tel"
+                name="phone"
+                value={form.phone[1]}
+                onChange={(e) => handleChange(e, 1)}
+                className="w-1/3 px-3 py-2 border border-gray-300 rounded-md"
+                maxLength={4}
+                placeholder="1111"
+              />
+              <span>-</span>
+              <input
+                type="tel"
+                name="phone"
+                value={form.phone[2]}
+                onChange={(e) => handleChange(e, 2)}
+                className="w-1/3 px-3 py-2 border border-gray-300 rounded-md"
+                maxLength={4}
+                placeholder="2222"
+              />
+            </div>
           </div>
-          <button onClick={sendOTP} className="w-full bg-blue-500 text-white py-2 rounded">
-            인증번호 받기
+          <button
+            onClick={sendOTP}
+            disabled={isLoading}
+            className={`w-full ${isLoading ? 'bg-gray-400' : 'bg-blue-500'} text-white py-2 rounded`}
+          >
+            {isLoading ? '인증번호 전송 중...' : '인증번호 받기'}
           </button>
-          
+
           <div className="flex justify-between items-center">
             <label className="text-sm font-medium text-gray-700 w-1/3">인증번호</label>
-            <input 
-              type="text" 
-              name="otp" 
-              value={form.otp} 
-              onChange={handleChange} 
-              className="w-2/3 px-3 py-2 border border-gray-300 rounded-md" 
+            <input
+              type="text"
+              name="otp"
+              value={form.otp}
+              onChange={handleChange}
+              className="w-2/3 px-3 py-2 border border-gray-300 rounded-md"
             />
           </div>
           <button onClick={confirmOTP} className="w-full bg-green-600 text-white py-2 rounded">
             인증 확인
           </button>
-          
+
+          {/* 생년월일, 성별, 키, 몸무게 */}
           <div className="flex justify-between items-center">
             <label className="text-sm font-medium text-gray-700 w-1/3">생년월일 *</label>
             <div className="w-2/3 flex gap-2">
-              <select 
-                name="birthYear" 
-                value={form.birthYear} 
-                onChange={handleChange} 
+              <select
+                name="birthYear"
+                value={form.birthYear}
+                onChange={handleChange}
                 className="w-1/3 px-3 py-2 border border-gray-300 rounded-md"
               >
                 <option value="">YYYY</option>
@@ -196,10 +258,10 @@ export default function SignupPage() {
                   <option key={i} value={2024 - i}>{2024 - i}</option>
                 ))}
               </select>
-              <select 
-                name="birthMonth" 
-                value={form.birthMonth} 
-                onChange={handleChange} 
+              <select
+                name="birthMonth"
+                value={form.birthMonth}
+                onChange={handleChange}
                 className="w-1/3 px-3 py-2 border border-gray-300 rounded-md"
               >
                 <option value="">MM</option>
@@ -207,10 +269,10 @@ export default function SignupPage() {
                   <option key={i} value={i + 1}>{i + 1}</option>
                 ))}
               </select>
-              <select 
-                name="birthDay" 
-                value={form.birthDay} 
-                onChange={handleChange} 
+              <select
+                name="birthDay"
+                value={form.birthDay}
+                onChange={handleChange}
                 className="w-1/3 px-3 py-2 border border-gray-300 rounded-md"
               >
                 <option value="">DD</option>
@@ -220,13 +282,13 @@ export default function SignupPage() {
               </select>
             </div>
           </div>
-          
+
           <div className="flex justify-between items-center">
             <label className="text-sm font-medium text-gray-700 w-1/3">성별 *</label>
-            <select 
-              name="gender" 
-              value={form.gender} 
-              onChange={handleChange} 
+            <select
+              name="gender"
+              value={form.gender}
+              onChange={handleChange}
               className="w-2/3 px-3 py-2 border border-gray-300 rounded-md"
             >
               <option value="">선택</option>
@@ -234,13 +296,13 @@ export default function SignupPage() {
               <option value="여">여</option>
             </select>
           </div>
-          
+
           <div className="flex justify-between items-center">
             <label className="text-sm font-medium text-gray-700 w-1/3">키 *</label>
-            <select 
-              name="height" 
-              value={form.height} 
-              onChange={handleChange} 
+            <select
+              name="height"
+              value={form.height}
+              onChange={handleChange}
               className="w-2/3 px-3 py-2 border border-gray-300 rounded-md"
             >
               <option value="">선택</option>
@@ -249,83 +311,29 @@ export default function SignupPage() {
               ))}
             </select>
           </div>
-          
+
           <div className="flex justify-between items-center">
             <label className="text-sm font-medium text-gray-700 w-1/3">몸무게 *</label>
-            <input 
-              type="number" 
-              name="weight" 
-              value={form.weight} 
-              onChange={handleChange} 
-              className="w-2/3 px-3 py-2 border border-gray-300 rounded-md" 
+            <input
+              type="number"
+              name="weight"
+              value={form.weight}
+              onChange={handleChange}
+              className="w-2/3 px-3 py-2 border border-gray-300 rounded-md"
             />
-          </div>
-          
-          <div className="flex justify-between items-center">
-            <label className="text-sm font-medium text-gray-700 w-1/3">시력 (좌/우)</label>
-            <div className="w-2/3 flex gap-2">
-              <input 
-                type="text" 
-                name="visionLeft" 
-                placeholder="좌" 
-                onChange={handleChange} 
-                className="w-1/2 px-3 py-2 border border-gray-300 rounded-md" 
-              />
-              <input 
-                type="text" 
-                name="visionRight" 
-                placeholder="우" 
-                onChange={handleChange} 
-                className="w-1/2 px-3 py-2 border border-gray-300 rounded-md" 
-              />
-            </div>
-          </div>
-          
-          <div className="flex justify-between items-start">
-            <label className="text-sm font-medium text-gray-700 w-1/3">주소 *</label>
-            <div className="w-2/3 flex flex-col gap-2">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  name="address"
-                  value={form.address}
-                  readOnly
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                />
-                <button 
-                  onClick={() => {
-                    new (window as any).daum.Postcode({
-                      oncomplete: function (data: any) {
-                        setForm(prev => ({ ...prev, address: data.roadAddress }))
-                      }
-                    }).open()
-                  }} 
-                  className="bg-blue-500 text-white px-4 py-2 rounded-md"
-                >
-                  검색
-                </button>
-              </div>
-              <input 
-                type="text" 
-                name="detailAddress" 
-                placeholder="상세 주소 입력" 
-                onChange={handleChange} 
-                className="w-full px-3 py-2 border border-gray-300 rounded-md" 
-              />
-            </div>
           </div>
         </div>
 
         {/* 건강 및 생활습관 정보 섹션 */}
         <div className="mt-8 border-t pt-6 space-y-4">
           <h2 className="text-xl font-semibold text-blue-600 mb-4">건강 및 생활습관 정보</h2>
-          
+
           <div className="flex justify-between items-center">
             <label className="text-sm font-medium text-gray-700 w-1/3">운동 빈도</label>
-            <select 
-              name="exerciseFrequency" 
-              value={form.exerciseFrequency} 
-              onChange={handleChange} 
+            <select
+              name="exerciseFrequency"
+              value={form.exerciseFrequency}
+              onChange={handleChange}
               className="w-2/3 px-3 py-2 border border-gray-300 rounded-md"
             >
               <option value="">선택</option>
@@ -338,10 +346,10 @@ export default function SignupPage() {
 
           <div className="flex justify-between items-center">
             <label className="text-sm font-medium text-gray-700 w-1/3">식습관</label>
-            <select 
-              name="dietType" 
-              value={form.dietType} 
-              onChange={handleChange} 
+            <select
+              name="dietType"
+              value={form.dietType}
+              onChange={handleChange}
               className="w-2/3 px-3 py-2 border border-gray-300 rounded-md"
             >
               <option value="">선택</option>
@@ -354,10 +362,10 @@ export default function SignupPage() {
 
           <div className="flex justify-between items-center">
             <label className="text-sm font-medium text-gray-700 w-1/3">수면의 질</label>
-            <select 
-              name="sleepQuality" 
-              value={form.sleepQuality} 
-              onChange={handleChange} 
+            <select
+              name="sleepQuality"
+              value={form.sleepQuality}
+              onChange={handleChange}
               className="w-2/3 px-3 py-2 border border-gray-300 rounded-md"
             >
               <option value="">선택</option>
@@ -371,10 +379,10 @@ export default function SignupPage() {
 
           <div className="flex justify-between items-center">
             <label className="text-sm font-medium text-gray-700 w-1/3">건강 목표</label>
-            <select 
-              name="healthGoal" 
-              value={form.healthGoal} 
-              onChange={handleChange} 
+            <select
+              name="healthGoal"
+              value={form.healthGoal}
+              onChange={handleChange}
               className="w-2/3 px-3 py-2 border border-gray-300 rounded-md"
             >
               <option value="">선택</option>
@@ -388,12 +396,36 @@ export default function SignupPage() {
 
           <div className="flex justify-between items-center">
             <label className="text-sm font-medium text-gray-700 w-1/3">알레르기 정보</label>
-            <input 
-              type="text" 
-              name="allergies" 
-              value={form.allergies} 
-              onChange={handleChange} 
-              placeholder="예: 견과류, 해산물 등" 
+            <input
+              type="text"
+              name="allergies"
+              value={form.allergies}
+              onChange={handleChange}
+              placeholder="예: 견과류, 해산물 등"
+              className="w-2/3 px-3 py-2 border border-gray-300 rounded-md"
+            />
+          </div>
+
+          <div className="flex justify-between items-center">
+            <label className="text-sm font-medium text-gray-700 w-1/3">영양제 섭취 여부</label>
+            <input
+              type="text"
+              name="supplements"
+              value={form.supplements}
+              onChange={handleChange}
+              placeholder="예: 오메가3, 비타민C 등"
+              className="w-2/3 px-3 py-2 border border-gray-300 rounded-md"
+            />
+          </div>
+
+          <div className="flex justify-between items-center">
+            <label className="text-sm font-medium text-gray-700 w-1/3">기타 질병 이력</label>
+            <input
+              type="text"
+              name="medicalHistory"
+              value={form.medicalHistory}
+              onChange={handleChange}
+              placeholder="예: 당뇨, 고혈압 등"
               className="w-2/3 px-3 py-2 border border-gray-300 rounded-md"
             />
           </div>
