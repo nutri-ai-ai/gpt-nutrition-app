@@ -1,12 +1,23 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [
-    "./src/**/*.{js,ts,jsx,tsx}",
-    "./components/**/*.{js,ts,jsx,tsx}",
-    // 필요한 경로들
+    './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
+    './src/components/**/*.{js,ts,jsx,tsx,mdx}',
+    './src/app/**/*.{js,ts,jsx,tsx,mdx}',
   ],
   theme: {
-    extend: {},
+    extend: {
+      animation: {
+        'spin-slow': 'spin 20s linear infinite',
+        'cursor': 'cursor 1s infinite step-end',
+      },
+      keyframes: {
+        cursor: {
+          '0%, 100%': { opacity: 1 },
+          '50%': { opacity: 0 },
+        },
+      },
+    },
   },
   plugins: [],
 }

@@ -4,7 +4,7 @@
 import { useEffect, useState, ReactNode } from 'react'
 import { db } from '@/lib/firebase'
 import { doc, getDoc } from 'firebase/firestore'
-import { useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { IoMdArrowBack, IoMdClose } from 'react-icons/io'
 import { FaRunning, FaShoppingCart, FaUtensils } from 'react-icons/fa'
@@ -111,7 +111,31 @@ const CartItem = ({ item, onRemove }: { item: CartItem; onRemove: () => void }) 
 
 const Cart = ({ isOpen, onClose, items, onRemove }: CartProps) => {
   const router = useRouter()
+  const pathname = usePathname()
   const total = items.reduce((sum, item) => sum + (item.product.pricePerUnit * 30), 0)
+
+  // 장바구니를 숨길 페이지 목록
+  const hideCartPages = [
+    '/login',
+    '/signup-v2',
+    '/signup-v2/phone',
+    '/signup-v2/survey',
+    '/signup-v2/intro',
+    '/signup-v2/account',
+    '/signup-v2/phone/',
+    '/signup-v2/survey/',
+    '/signup-v2/intro/',
+    '/signup-v2/account/',
+    '/signup-v2/phone/page',
+    '/signup-v2/survey/page',
+    '/signup-v2/intro/page',
+    '/signup-v2/account/page'
+  ]
+
+  // 현재 페이지가 장바구니를 숨길 페이지인지 확인
+  const shouldHideCart = hideCartPages.some(page => pathname?.startsWith(page))
+
+  if (shouldHideCart) return null
 
   return (
     <motion.div

@@ -1,5 +1,20 @@
 {
   "projects": {
     "default": "nutri-ai-e56a8"
-  }
+  },
+  "ignore": [
+    ".next/**",
+    "node_modules/**",
+    "public/**",
+    "src/**",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    "next.config.js",
+    "tailwind.config.ts",
+    "postcss.config.js",
+    ".gitignore",
+    ".git/**",
+    "README.md"
+  ]
 }

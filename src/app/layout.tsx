@@ -1,7 +1,8 @@
 import { Inter } from 'next/font/google'
 import './globals.css' // ✅ Tailwind CSS 불러오기
 import { metadata } from './metadata'
-import ClientLayout from '../components/ClientLayout'
+import ClientLayout from '@/components/ClientLayout'
+import { AuthProvider } from '@/context/auth-context'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -19,7 +20,11 @@ export default function RootLayout({
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </head>
       <body className={inter.className}>
-        <ClientLayout>{children}</ClientLayout>
+        <AuthProvider>
+          <ClientLayout>
+            {children}
+          </ClientLayout>
+        </AuthProvider>
       </body>
     </html>
   )

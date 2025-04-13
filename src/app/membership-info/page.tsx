@@ -2,402 +2,221 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { auth, db } from '@/lib/firebase'
-import { doc, getDoc, updateDoc } from 'firebase/firestore'
-import { motion } from 'framer-motion'
-import { onAuthStateChanged } from 'firebase/auth'
+import { useAuth } from '@/context/auth-context'
+import { doc, getDoc } from 'firebase/firestore'
+import { db } from '@/lib/firebase'
+import Image from 'next/image'
 
-interface UserProfile {
-  name: string
-  email: string
-  gender: string
-  birthDate: string
-  height: string
-  weight: string
-  healthGoals: string[]
-  healthConditions: string[]
-  allergies: string[]
-  medications: string[]
-  dietaryRestrictions: string[]
-  activityLevel: string
-  sleepHours: string
-  stressLevel: string
-  waterIntake: string
-  smoking: string
-  alcohol: string
-  caffeine: string
+interface UserData {
+  username?: string
+  email?: string
+  name?: string
+  surveyData?: {
+    gender?: string
+    birthDate?: string
+    height?: number
+    weight?: number
+    diseases?: string[]
+    customDisease?: string
+    fatigueLevel?: number
+    sleepQuality?: number
+    digestionLevel?: number
+    immunityLevel?: number
+    skinCondition?: number
+    concentrationLevel?: number
+    stressLevel?: number
+    jointPainLevel?: number
+    weightManagement?: number
+    dietBalance?: number
+  }
+  healthGoals?: string[]
+  // 다른 필요한 필드 타입 추가 가능
 }
 
-const healthGoals = [
-  '체중 감량',
-  '체중 증가',
-  '근육 증가',
-  '체력 향상',
-  '면역력 강화',
-  '스트레스 관리',
-  '수면 개선',
-  '소화 기능 개선',
-  '피부 건강',
-  '두뇌 기능 향상',
-]
-
-const healthConditions = [
-  '당뇨병',
-  '고혈압',
-  '고지혈증',
-  '심장 질환',
-  '갑상선 질환',
-  '골다공증',
-  '관절염',
-  '빈혈',
-  '알레르기',
-  '소화기 질환',
-]
-
-const activityLevels = [
-  '거의 운동하지 않음',
-  '가벼운 운동 (주 1-3일)',
-  '중간 정도 운동 (주 3-5일)',
-  '적극적인 운동 (주 6-7일)',
-  '매우 적극적인 운동 (하루 2회 이상)',
-]
-
-const stressLevels = ['매우 낮음', '낮음', '보통', '높음', '매우 높음']
+// 건강 설문 필드와 레이블 매핑
+const healthSurveyLabels: Record<string, string> = {
+  fatigueLevel: '평소 피로도',
+  sleepQuality: '수면의 질',
+  digestionLevel: '소화 기능',
+  immunityLevel: '면역력',
+  skinCondition: '피부/모발 상태',
+  concentrationLevel: '집중력',
+  stressLevel: '스트레스',
+  jointPainLevel: '관절/근육 통증',
+  weightManagement: '체중/지방 관리 필요성',
+  dietBalance: '식습관 균형'
+};
 
 export default function MembershipInfoPage() {
   const router = useRouter()
-  const [isEditing, setIsEditing] = useState(false)
+  const { user, loading: authLoading } = useAuth()
+  const [userData, setUserData] = useState<UserData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [profile, setProfile] = useState<UserProfile>({
-    name: '',
-    email: '',
-    gender: '',
-    birthDate: '',
-    height: '',
-    weight: '',
-    healthGoals: [],
-    healthConditions: [],
-    allergies: [],
-    medications: [],
-    dietaryRestrictions: [],
-    activityLevel: '',
-    sleepHours: '',
-    stressLevel: '',
-    waterIntake: '',
-    smoking: '',
-    alcohol: '',
-    caffeine: '',
-  })
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    const loadUserProfile = async () => {
-      try {
-        const storedUsername = localStorage.getItem('username')
-        if (!storedUsername) {
+    if (!authLoading && !user) {
+      router.push('/login')
+      return
+    }
+
+    if (user) {
+      const fetchUserData = async (userId: string) => {
+        console.log('Fetching data for UID:', userId);
+        setIsLoading(true);
+        try {
+          const userRef = doc(db, 'users', userId)
+          const userDoc = await getDoc(userRef)
+
+          if (userDoc.exists()) {
+            const fetchedData = userDoc.data() as UserData;
+            console.log('Fetched User Data:', fetchedData);
+            setUserData(fetchedData);
+          } else {
+            setError('사용자 정보를 찾을 수 없습니다. 계정이 완전히 생성되지 않았을 수 있습니다.')
+            // 필요시 로그인 페이지로 리디렉션
+            // router.push('/login') 
+          }
+        } catch (err) {
+          console.error('사용자 정보 로드 오류:', err)
+          setError('정보를 불러오는 중 오류가 발생했습니다.')
+        } finally {
           setIsLoading(false)
-          router.replace('/login')
-          return
         }
-
-        const userDoc = await getDoc(doc(db, 'users', storedUsername))
-        if (userDoc.exists()) {
-          const data = userDoc.data()
-          setProfile(prev => ({
-            ...prev,
-            ...data,
-          }))
-        }
-      } catch (error) {
-        console.error('프로필 로드 실패:', error)
-      } finally {
-        setIsLoading(false)
       }
+      fetchUserData(user.uid)
+    } else {
+        setIsLoading(authLoading);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, authLoading, router])
+
+  // 정보 항목 렌더링 함수
+  const renderInfoItem = (label: string, value: string | number | string[] | undefined | null, isSurveyScore: boolean = false) => {
+    let displayValue: React.ReactNode = '-' // 기본값
+
+    // '선택한 건강 목표' 레이블일 때 값과 타입 확인용 로그 추가
+    if (label === '선택한 건강 목표') {
+      console.log(`Rendering '선택한 건강 목표' with value:`, value);
+      console.log(`Type: ${typeof value}, Is Array: ${Array.isArray(value)}`);
     }
 
-    loadUserProfile()
-  }, [router])
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target
-    setProfile(prev => ({ ...prev, [name]: value }))
-  }
-
-  const handleCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value, checked } = e.target
-    setProfile(prev => ({
-      ...prev,
-      [name]: checked
-        ? [...(prev[name as keyof UserProfile] as string[]), value]
-        : (prev[name as keyof UserProfile] as string[]).filter((item: string) => item !== value),
-    }))
-  }
-
-  const handleUpdateProfile = async () => {
-    try {
-      const storedUsername = localStorage.getItem('username')
-      if (!storedUsername) {
-        console.error('사용자가 로그인되어 있지 않습니다.')
-        router.replace('/login')
-        return
+    if (isSurveyScore && typeof value === 'number') {
+      // 건강 설문 점수는 1~5점으로 표시
+      displayValue = `${value}점`;
+    } else if (Array.isArray(value)) {
+      if (value.length > 0) {
+        displayValue = value.join(', ')
+      } else {
+        displayValue = '선택 안 함'
       }
-
-      const profileData = {
-        ...profile,
-        updatedAt: new Date().toISOString(),
+    } else if (value !== undefined && value !== null && value !== '') {
+      displayValue = String(value)
+      if (label === '키') displayValue += ' cm'
+      if (label === '체중') displayValue += ' kg'
+      if (label === '이메일') {
+        // 간단한 이메일 마스킹
+        const parts = String(value).split('@')
+        if (parts.length === 2) {
+          displayValue = `${parts[0].substring(0, 3)}***@${parts[1]}`
+        }
       }
-
-      await updateDoc(doc(db, 'users', storedUsername), profileData)
-      setIsEditing(false)
-      alert('프로필이 성공적으로 업데이트되었습니다.')
-    } catch (error) {
-      console.error('프로필 업데이트 실패:', error)
-      alert('프로필 업데이트 중 오류가 발생했습니다.')
+    } else if (value === '') {
+        displayValue = '입력 안 함'
     }
-  }
 
-  if (isLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
-          <p className="mt-4 text-gray-600">로딩 중...</p>
+      <div className="py-3 sm:grid sm:grid-cols-3 sm:gap-4 border-b border-gray-100 last:border-b-0">
+        <dt className="text-sm font-medium text-gray-500">{label}</dt>
+        <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">{displayValue}</dd>
+      </div>
+    )
+  }
+
+  if (isLoading || authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-blue-50 to-white">
+        <div className="flex flex-col items-center">
+          <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+          <p className="mt-4 text-gray-600">정보를 불러오는 중...</p>
         </div>
       </div>
     )
   }
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
-      <div className="max-w-5xl mx-auto p-4 md:p-8 space-y-8">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="bg-white rounded-2xl shadow-lg p-6"
-        >
-          <div className="flex justify-between items-center mb-6">
-            <h1 className="text-2xl font-bold">회원 정보</h1>
-            <button
-              onClick={() => setIsEditing(!isEditing)}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              {isEditing ? '취소' : '프로필 변경'}
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* 기본 정보 */}
-            <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-gray-800">기본 정보</h2>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">이름</label>
-                <input
-                  type="text"
-                  name="name"
-                  value={profile.name}
-                  onChange={handleInputChange}
-                  disabled={!isEditing}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">이메일</label>
-                <input
-                  type="email"
-                  name="email"
-                  value={profile.email}
-                  onChange={handleInputChange}
-                  disabled={!isEditing}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">성별</label>
-                <select
-                  name="gender"
-                  value={profile.gender}
-                  onChange={handleInputChange}
-                  disabled={!isEditing}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-                >
-                  <option value="">선택하세요</option>
-                  <option value="male">남성</option>
-                  <option value="female">여성</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">생년월일</label>
-                <input
-                  type="date"
-                  name="birthDate"
-                  value={profile.birthDate}
-                  onChange={handleInputChange}
-                  disabled={!isEditing}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-                />
-              </div>
-            </div>
-
-            {/* 신체 정보 */}
-            <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-gray-800">신체 정보</h2>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">키 (cm)</label>
-                <input
-                  type="number"
-                  name="height"
-                  value={profile.height}
-                  onChange={handleInputChange}
-                  disabled={!isEditing}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">체중 (kg)</label>
-                <input
-                  type="number"
-                  name="weight"
-                  value={profile.weight}
-                  onChange={handleInputChange}
-                  disabled={!isEditing}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-                />
-              </div>
-            </div>
-
-            {/* 건강 목표 */}
-            <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-gray-800">건강 목표</h2>
-              <div className="grid grid-cols-2 gap-2">
-                {healthGoals.map(goal => (
-                  <label key={goal} className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      name="healthGoals"
-                      value={goal}
-                      checked={profile.healthGoals.includes(goal)}
-                      onChange={handleCheckboxChange}
-                      disabled={!isEditing}
-                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:bg-gray-100"
-                    />
-                    <span className="text-sm text-gray-700">{goal}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {/* 건강 상태 */}
-            <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-gray-800">건강 상태</h2>
-              <div className="grid grid-cols-2 gap-2">
-                {healthConditions.map(condition => (
-                  <label key={condition} className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      name="healthConditions"
-                      value={condition}
-                      checked={profile.healthConditions.includes(condition)}
-                      onChange={handleCheckboxChange}
-                      disabled={!isEditing}
-                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:bg-gray-100"
-                    />
-                    <span className="text-sm text-gray-700">{condition}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {/* 생활 습관 */}
-            <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-gray-800">생활 습관</h2>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">활동 수준</label>
-                <select
-                  name="activityLevel"
-                  value={profile.activityLevel}
-                  onChange={handleInputChange}
-                  disabled={!isEditing}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-                >
-                  <option value="">선택하세요</option>
-                  {activityLevels.map(level => (
-                    <option key={level} value={level}>
-                      {level}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">평균 수면 시간 (시간)</label>
-                <input
-                  type="number"
-                  name="sleepHours"
-                  value={profile.sleepHours}
-                  onChange={handleInputChange}
-                  disabled={!isEditing}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">스트레스 수준</label>
-                <select
-                  name="stressLevel"
-                  value={profile.stressLevel}
-                  onChange={handleInputChange}
-                  disabled={!isEditing}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-                >
-                  <option value="">선택하세요</option>
-                  {stressLevels.map(level => (
-                    <option key={level} value={level}>
-                      {level}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {isEditing && (
-            <div className="mt-8 flex justify-end">
-              <button
-                onClick={handleUpdateProfile}
-                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                저장하기
-              </button>
-            </div>
-          )}
-        </motion.div>
+    <div className="min-h-screen flex flex-col items-center justify-center px-4 bg-gradient-to-b from-blue-50 to-white py-12">
+      <div className="relative w-16 h-16 mb-8">
+        <Image
+          src="/logo-animation.svg"
+          alt="Nutri AI Logo"
+          width={64}
+          height={64}
+          className="animate-spin-slow"
+        />
       </div>
 
-      {/* 푸터 */}
-      <footer className="bg-white border-t border-gray-100 py-8">
-        <div className="max-w-5xl mx-auto px-4">
-          <div className="flex flex-col md:flex-row justify-between items-center gap-6">
-            <div className="text-center md:text-left">
-              <h3 className="text-3xl font-bold bg-gradient-to-r from-blue-500 to-blue-700 bg-clip-text text-transparent">
-                NUTRI-AI
-              </h3>
-              <p className="mt-2 text-gray-600">당신의 건강한 삶을 위한 AI 영양 파트너</p>
-            </div>
-            <div className="flex flex-col items-center md:items-end gap-2">
-              <div className="flex items-center gap-4">
-                <a href="#" className="text-gray-600 hover:text-blue-600 transition-colors">
-                  이용약관
-                </a>
-                <span className="text-gray-400">|</span>
-                <a href="#" className="text-gray-600 hover:text-blue-600 transition-colors">
-                  개인정보처리방침
-                </a>
-              </div>
-              <p className="text-sm text-gray-500">
-                © {new Date().getFullYear()} NUTRI-AI. All rights reserved.
-              </p>
-            </div>
+      <div className="max-w-2xl mx-auto w-full bg-white p-8 rounded-2xl shadow-xl border border-gray-100">
+        <h1 className="text-xl font-semibold text-center mb-8 text-gray-800">
+          회원 정보
+        </h1>
+
+        {error && (
+          <div className="mb-6 p-3 bg-red-50 text-red-500 text-sm rounded-lg">
+            {error}
           </div>
+        )}
+
+        {userData ? (
+          <dl>
+            {/* 기본 정보 */}
+            <div className="mb-4">
+                <h2 className="text-md font-semibold text-gray-700 mb-2">기본 정보</h2>
+                {renderInfoItem('이름', userData.name)}
+                {renderInfoItem('아이디', userData.username)}
+                {renderInfoItem('이메일', userData.email)}
+            </div>
+            
+            {/* 기본 신체 정보 */}
+            <div className="mb-4">
+                <h2 className="text-md font-semibold text-gray-700 mb-2">기본 신체 정보</h2>
+                {renderInfoItem('성별', userData.surveyData?.gender === 'male' ? '남성' : userData.surveyData?.gender === 'female' ? '여성' : undefined)}
+                {renderInfoItem('생년월일', userData.surveyData?.birthDate)}
+                {renderInfoItem('키', userData.surveyData?.height)}
+                {renderInfoItem('체중', userData.surveyData?.weight)}
+                {renderInfoItem('보유 질환', userData.surveyData?.diseases)}
+                {userData.surveyData?.customDisease && renderInfoItem('기타 질환', userData.surveyData.customDisease)}
+            </div>
+            
+            {/* 건강 설문 응답 */}
+            <div className="mb-4">
+                <h2 className="text-md font-semibold text-gray-700 mb-2">건강 설문 응답</h2>
+                {Object.entries(healthSurveyLabels).map(([key, label]) => (
+                  <div key={key}>
+                    {renderInfoItem(label, userData.surveyData?.[key as keyof UserData['surveyData']], true)}
+                  </div>
+                ))}
+            </div>
+            
+            {/* 건강 목표 */}
+            <div>
+                 <h2 className="text-md font-semibold text-gray-700 mb-2">건강 목표</h2>
+                {renderInfoItem('선택한 건강 목표', userData.healthGoals)}
+            </div>
+          </dl>
+        ) : (
+          !error && <p className="text-center text-gray-500">표시할 사용자 정보가 없습니다.</p>
+        )}
+
+        <div className="mt-8 text-center">
+          <button
+            onClick={() => router.back()} // 이전 페이지로 이동
+            className="px-6 py-2 bg-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-300 transition-colors"
+          >
+            뒤로가기
+          </button>
         </div>
-      </footer>
-    </main>
+      </div>
+    </div>
   )
 }

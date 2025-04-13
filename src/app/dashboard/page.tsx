@@ -32,21 +32,30 @@ export default function DashboardPage() {
   }, [])
 
   useEffect(() => {
-    const storedUsername = localStorage.getItem('username')
-    // 로컬스토리지에서 username 확인
-    if (!storedUsername) {
-      router.push('/login')  // username 없으면 로그인 페이지로 리디렉션
+    const storedUserId = localStorage.getItem('uid')
+    // 로컬스토리지에서 uid 확인
+    if (!storedUserId) {
+      router.push('/login')  // uid 없으면 로그인 페이지로 리디렉션
       return
     }
 
     // Firestore에서 사용자 데이터 조회
     const getUserData = async () => {
       try {
-        const docRef = doc(db, 'users', storedUsername)
+        const docRef = doc(db, 'users', storedUserId)
         const docSnapshot = await getDoc(docRef)
 
         // 사용자가 존재하지 않으면 로그인 페이지로 리디렉션
         if (docSnapshot.exists()) {
+          const userData = docSnapshot.data()
+          
+          // 사용자 인증 방식 확인
+          if (userData.authMethod === 'email') {
+            console.log('이메일 인증 사용자입니다')
+          } else if (userData.authMethod === 'phone') {
+            console.log('핸드폰 인증 사용자입니다')
+          }
+          
           setUserData(docSnapshot.data())
         } else {
           console.error('사용자 데이터가 존재하지 않습니다.')
@@ -66,6 +75,8 @@ export default function DashboardPage() {
   const handleLogout = () => {
     localStorage.removeItem('username')
     localStorage.removeItem('password')
+    localStorage.removeItem('uid')
+    localStorage.removeItem('email')
     router.push('/login')  // 로그아웃 후 로그인 페이지로 리디렉션
   }
 

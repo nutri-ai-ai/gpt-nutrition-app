@@ -1,154 +1,189 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { doc, getDoc } from 'firebase/firestore'
+import { useAuth } from '@/context/auth-context'
+import { doc, getDoc, updateDoc, setDoc, increment, serverTimestamp } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
-import { toast } from 'react-hot-toast'
-import Image from 'next/image'
 import Link from 'next/link'
+import Image from 'next/image'
 
 export default function LoginPage() {
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
   const router = useRouter()
-  const [form, setForm] = useState({
-    id: '',
-    password: ''
-  })
+  const [error, setError] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
+  const [displayText, setDisplayText] = useState('')
+  const [isTypingComplete, setIsTypingComplete] = useState(false)
+  const { signIn } = useAuth()
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    
+  useEffect(() => {
+    const text = 'NUTRI-AI'
+    let currentIndex = 0
+    let isDeleting = false
+    let pauseCount = 0
+
+    const interval = setInterval(() => {
+      if (!isDeleting && currentIndex <= text.length) {
+        setDisplayText(text.slice(0, currentIndex))
+        currentIndex++
+        if (currentIndex > text.length) {
+          pauseCount = 20 // 약 2초 대기
+          isDeleting = false
+          setIsTypingComplete(true)
+        }
+      } else if (pauseCount > 0) {
+        pauseCount--
+      }
+    }, 100)
+
+    return () => clearInterval(interval)
+  }, [])
+
+  const handleLogin = async () => {
     try {
-      // 사용자 정보 확인
-      const userDoc = await getDoc(doc(db, "users", form.id))
-      const userData = userDoc.data()
-
-      if (!userData) {
-        toast.error('존재하지 않는 아이디입니다.', {
-          duration: 2000,
-          position: 'bottom-center',
-          style: {
-            background: '#EF4444',
-            color: '#ffffff',
-            fontSize: '16px',
-            padding: '16px',
-            borderRadius: '12px',
-          }
-        })
+      if (!username.trim()) {
+        setError('아이디를 입력해주세요')
         return
       }
+      
+      if (!password.trim()) {
+        setError('비밀번호를 입력해주세요')
+        return
+      }
+      
+      setIsLoading(true)
+      setError('')
+      
+      // useAuth의 signIn 함수 사용
+      const user = await signIn(username, password)
+      
+      // 로그인 기록 업데이트
+      const userStatsRef = doc(db, 'userStats', user.uid)
+      const userStatsDoc = await getDoc(userStatsRef)
 
-      // 비밀번호 확인 후 로그인 처리
-      if (userData.password === form.password) {
-        // 로컬 스토리지에 저장
-        localStorage.setItem('username', form.id)
-        localStorage.setItem('password', form.password)
-        
-        // 로그인 성공 알림창 표시 후 페이지 이동
-        toast.success('로그인 성공!', {
-          duration: 1500,
-          position: 'bottom-center',
-          style: {
-            background: 'linear-gradient(to right, #2563eb, #1d4ed8)',
-            color: '#ffffff',
-            fontSize: '16px',
-            padding: '16px 24px',
-            borderRadius: '12px',
-            maxWidth: '400px',
-            textAlign: 'center',
-            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-          },
-          icon: '🎉'
-        });
-
-        // 토스트 알림이 표시된 후 페이지 이동
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        router.push('/intro');
+      if (userStatsDoc.exists()) {
+        await updateDoc(userStatsRef, {
+          loginCount: increment(1),
+          lastLoginAt: serverTimestamp(),
+        })
       } else {
-        toast.error('비밀번호가 틀렸습니다.', {
-          duration: 2000,
-          position: 'bottom-center',
-          style: {
-            background: '#EF4444',
-            color: '#ffffff',
-            fontSize: '16px',
-            padding: '16px',
-            borderRadius: '12px',
-          }
+        await setDoc(userStatsRef, {
+          userId: user.uid,
+          username: username,
+          loginCount: 1,
+          firstLoginAt: serverTimestamp(),
+          lastLoginAt: serverTimestamp(),
         })
       }
-    } catch (error) {
-      console.error('로그인 에러:', error)
-      toast.error('로그인 중 오류가 발생했습니다.', {
-        duration: 2000,
-        position: 'bottom-center',
-        style: {
-          background: '#EF4444',
-          color: '#ffffff',
-          fontSize: '16px',
-          padding: '16px',
-          borderRadius: '12px',
-        }
-      })
+
+      // IP 주소 가져오기
+      try {
+        const ipResponse = await fetch('https://api.ipify.org?format=json')
+        const { ip } = await ipResponse.json()
+
+        // 로그인 로그 저장
+        await fetch('/api/login-log', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            userId: user.uid,
+            username: username,
+            ipAddress: ip,
+            userAgent: navigator.userAgent,
+          }),
+        })
+      } catch (ipError) {
+        console.error('IP 정보 가져오기 실패:', ipError)
+      }
+
+      // 로그인 성공 후 대시보드로 이동
+      router.push('/dashboard')
+    } catch (error: any) {
+      console.error('로그인 오류:', error)
+      setError(error.message || '로그인에 실패했습니다. 다시 시도해주세요.')
+    } finally {
+      setIsLoading(false)
     }
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center bg-white relative">
-      {/* 로고 섹션 - 화면 상단에서 약 35% 위치 */}
-      <div className="absolute top-[35%] transform -translate-y-1/2">
-        <div className="relative w-24 h-24">
-          <Image
-            src="/logo-animation.svg"
-            alt="Nutri AI Logo"
-            width={96}
-            height={96}
-            className="animate-spin-slow"
+    <div className="min-h-screen flex flex-col items-center justify-center px-3 bg-gradient-to-b from-blue-50 to-white">
+      {/* 로고 */}
+      <div className="relative w-12 h-12 mb-3">
+        <Image
+          src="/logo-animation.svg"
+          alt="Nutri AI Logo"
+          width={48}
+          height={48}
+          className="animate-spin-slow"
+        />
+      </div>
+
+      {/* 메인 컨텐츠 */}
+      <div className="w-full max-w-md space-y-5">
+        <div className="text-center space-y-1.5">
+          <div className="inline-flex items-center justify-center">
+            <p className="text-[10px] font-medium text-blue-500 tracking-[0.2em] font-mono">
+              {displayText}
+              <span className={`inline-block w-[2px] h-[8px] bg-blue-500 ml-[1px] ${isTypingComplete ? 'animate-cursor' : ''}`}>
+              </span>
+            </p>
+          </div>
+          <h2 className="text-xl font-semibold text-gray-800">
+            로그인
+          </h2>
+        </div>
+
+        {error && (
+          <div className="text-red-500 text-xs text-center bg-red-50 p-1.5 rounded-lg">
+            {error}
+          </div>
+        )}
+
+        <div className="space-y-2.5">
+          <input
+            type="text"
+            placeholder="아이디"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            className="w-full px-3 py-2.5 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center text-sm placeholder:text-gray-400"
+            onKeyDown={(e) => e.key === 'Enter' && document.getElementById('password-input')?.focus()}
           />
+          <input
+            id="password-input"
+            type="password"
+            placeholder="비밀번호"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full px-3 py-2.5 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center text-sm placeholder:text-gray-400"
+            onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+          />
+          <button
+            onClick={handleLogin}
+            disabled={isLoading}
+            className={`w-full py-2.5 rounded-xl font-medium text-sm transition-colors ${
+              isLoading
+                ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                : 'bg-blue-500 text-white hover:bg-blue-600'
+            }`}
+          >
+            {isLoading ? '로그인 중...' : '로그인'}
+          </button>
+        </div>
+
+        <div className="w-full pt-1.5">
+          <Link
+            href="/signup-v2"
+            className="block text-xs text-blue-500 hover:text-blue-600 text-right transition-colors"
+          >
+            아직도 건강관리 AI가 없으신가요? 회원가입
+          </Link>
         </div>
       </div>
-
-      {/* 텍스트 섹션 - 화면 중앙 */}
-      <div className="absolute top-[45%] left-1/2 transform -translate-x-1/2 text-center w-full">
-        <h1 className="text-[28px] font-medium text-gray-900 leading-tight mb-12">
-          <span className="font-bold text-[34px]">NUTRI AI</span>
-        </h1>
-
-        {/* 로그인 폼 */}
-        <form onSubmit={handleSubmit} className="w-full max-w-md mx-auto px-8">
-          <div className="space-y-4">
-            <input
-              type="text"
-              placeholder="아이디"
-              value={form.id}
-              onChange={(e) => setForm(prev => ({ ...prev, id: e.target.value }))}
-              className="w-full px-4 py-3 rounded-full bg-gray-50 border border-gray-200 focus:outline-none focus:border-blue-500 transition-colors"
-            />
-            <input
-              type="password"
-              placeholder="비밀번호"
-              value={form.password}
-              onChange={(e) => setForm(prev => ({ ...prev, password: e.target.value }))}
-              className="w-full px-4 py-3 rounded-full bg-gray-50 border border-gray-200 focus:outline-none focus:border-blue-500 transition-colors"
-            />
-          </div>
-
-          {/* 로그인 버튼 */}
-          <button
-            type="submit"
-            className="w-full mt-8 py-4 text-lg text-white font-medium bg-blue-600 rounded-full text-center"
-          >
-            로그인
-          </button>
-
-          {/* 회원가입 링크 */}
-          <div className="mt-4 text-center">
-            <Link href="/signup" className="text-sm text-gray-600 hover:text-blue-600 transition-colors">
-              회원이 아니신가요? 회원가입
-            </Link>
-          </div>
-        </form>
-      </div>
-    </main>
+    </div>
   )
 }

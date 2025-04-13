@@ -1,15 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { doc, setDoc, collection, query, where, getDocs } from 'firebase/firestore'
-import { db } from '@/lib/firebase'
-import { auth } from '@/lib/firebase'
+import { auth, db } from '@/lib/firebase'
+import { collection, doc, getDocs, query, setDoc, where } from 'firebase/firestore'
 import {
-  RecaptchaVerifier,
-  signInWithPhoneNumber,
   PhoneAuthProvider,
-  signInWithCredential
+  signInWithCredential,
+  signInWithPhoneNumber
 } from 'firebase/auth'
 
 export default function SignupPage() {
@@ -43,19 +41,8 @@ export default function SignupPage() {
     medicalHistory: '',     // 기타 질병 이력
   })
 
-  const [verificationId, setVerificationId] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-
-  useEffect(() => {
-    if (!(window as any).recaptchaVerifier) {
-      const verifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-        size: 'invisible',
-        callback: () => {}
-      })
-      verifier.render()
-      ;(window as any).recaptchaVerifier = verifier
-    }
-  }, [])
+  const [verificationId, setVerificationId] = useState('')
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>, index?: number) => {
     const { name, value } = e.target
@@ -77,10 +64,9 @@ export default function SignupPage() {
       const phoneNumber = `+82${form.phone.join('')}`;  // 한국 번호는 자동으로 +82를 붙여서 처리
       const confirmation = await signInWithPhoneNumber(auth, phoneNumber, appVerifier)
       setVerificationId(confirmation.verificationId)
-      alert('인증번호가 전송되었습니다.')
     } catch (err) {
-      alert('인증번호 전송 실패')
       console.error(err)
+      alert('인증번호 전송 실패')
     } finally {
       setIsLoading(false)
     }
@@ -94,7 +80,6 @@ export default function SignupPage() {
       setForm(prev => ({ ...prev, verified: true }))
     } catch (err) {
       alert('인증 실패')
-      console.error(err)
     }
   }
 
@@ -106,11 +91,11 @@ export default function SignupPage() {
     const snapshot2 = await getDocs(q2)
 
     if (!snapshot1.empty) {
-      alert('아이디가 이미 존재합니다!')
+      alert('이미 사용 중인 아이디입니다.')
       return false
     }
     if (!snapshot2.empty) {
-      alert('이메일이 이미 존재합니다!')
+      alert('이미 사용 중인 이메일입니다.')
       return false
     }
     return true
@@ -122,8 +107,8 @@ export default function SignupPage() {
       return
     }
 
-    const isUnique = await checkDuplicate()
-    if (!isUnique) return
+    const isNotDuplicate = await checkDuplicate()
+    if (!isNotDuplicate) return
 
     try {
       const phoneWithCountryCode = `+82${form.phone.join('')}`  // +82를 자동으로 추가
@@ -132,8 +117,8 @@ export default function SignupPage() {
       alert('회원가입 완료! ✅')
       router.push(`/`)
     } catch (err) {
-      alert('회원정보 저장 실패')
       console.error(err)
+      alert('회원가입 실패')
     }
   }
 
@@ -419,25 +404,25 @@ export default function SignupPage() {
           </div>
           
           <div className="flex justify-between items-center">
-           <label className="text-sm font-medium text-gray-700 w-1/3">건강 목표</label>
-           <select
-             name="healthGoal"
-             value={form.healthGoal}
-             onChange={handleChange}
-             className="w-2/3 px-3 py-2 border border-gray-300 rounded-md"
-  >
-             <option value="">선택</option>
-             <option value="종합 관리">종합 관리</option>
-             <option value="근육 증가">근육 증가</option>
-             <option value="에너지 향상">에너지 향상</option>
-             <option value="면역력 강화">면역력 강화</option>
-             <option value="체중 감량">체중 감량</option>
-             <option value="성장기 키성장">성장기 키성장</option>
-             <option value="피부개선">피부개선</option>
-             <option value="갱년기">갱년기</option>
-             <option value="피로감 개선">피로감 개선</option>
-             <option value="뇌건강 관리">뇌건강 관리</option>
-           </select>
+            <label className="text-sm font-medium text-gray-700 w-1/3">건강 목표</label>
+            <select
+              name="healthGoal"
+              value={form.healthGoal}
+              onChange={handleChange}
+              className="w-2/3 px-3 py-2 border border-gray-300 rounded-md"
+            >
+              <option value="">선택</option>
+              <option value="종합 관리">종합 관리</option>
+              <option value="근육 증가">근육 증가</option>
+              <option value="에너지 향상">에너지 향상</option>
+              <option value="면역력 강화">면역력 강화</option>
+              <option value="체중 감량">체중 감량</option>
+              <option value="성장기 키성장">성장기 키성장</option>
+              <option value="피부개선">피부개선</option>
+              <option value="갱년기">갱년기</option>
+              <option value="피로감 개선">피로감 개선</option>
+              <option value="뇌건강 관리">뇌건강 관리</option>
+            </select>
           </div>
 
           <div className="flex justify-between items-center">
