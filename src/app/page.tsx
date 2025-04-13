@@ -1,59 +1,45 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
-import Button from '@/components/ui/Button'
+import Link from 'next/link'
+import Image from 'next/image'
 
 export default function Home() {
-  const router = useRouter()
-
   return (
-<main className="min-h-screen bg-white flex items-center justify-center px-4">
-  <div className="w-full max-w-md flex flex-col items-center text-center space-y-8">
-    {/* 로고 및 환영 메시지 */}
-    <br/>
+    <main className="flex min-h-screen flex-col items-center bg-white relative">
+      {/* 로고 섹션 - 화면 상단에서 약 40% 위치 */}
+      <div className="absolute top-[40%] transform -translate-y-1/2">
+        <div className="relative w-24 h-24">
+          <Image
+            src="/logo-animation.svg"
+            alt="Nutri AI Logo"
+            width={96}
+            height={96}
+            className="animate-spin-slow"
+          />
+        </div>
+      </div>
 
+      {/* 텍스트 섹션 - 화면 중앙 */}
+      <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 text-center w-full">
+        <h1 className="text-[28px] font-medium text-gray-900 leading-tight">
+          <span className="font-bold text-[34px]">NUTRI AI</span>에<br />
+          오신걸 환영합니다.
+        </h1>
+        <p className="mt-16 text-gray-600 text-lg leading-relaxed">
+          사용자의 건강 데이터를 바탕으로<br />
+          <span className="text-blue-600">맞춤형 영양 루틴</span>을 설계해드려요.
+        </p>
+      </div>
 
-    <div className="flex flex-col items-start w-full space-y-4">
-      <img
-        src="/path/to/logo.png"  // 실제 로고 파일 경로로 교체해주세요
-        alt="NUTRI AI 로고"
-        className="w-24 h-24 object-cover mb-4"
-      />
-      
-      <h1 className="text-4xl font-bold text-black-600 text-left">
-        <span className="font-bold">NUTRI AI</span>에 <br />
-        오신 걸 환영합니다!
-      </h1>
-    </div>
-
-
-    {/* 설명 텍스트 */}
-    <p className="text-gray-600 text-lg leading-relaxed">
-    
-      사용자의 건강 데이터를 바탕으로 <br />
-      <span className="text-blue-600 font-semibold">맞춤형 영양 루틴</span>을 설계해드려요.
-      <br/>
-    <br/>
-    <br/>
-    <br/>
-    <br/>
-    <br/>
- 
-  
-    </p>
-
-    {/* 시작하기 버튼 */}
-    <div className="w-full mt-8">
-      <Button
-        variant="primary"
-        onClick={() => router.push('/login')}
-        className="w-full py-6 text-xl text-white bg-blue-600 rounded-lg hover:bg-blue-700"
-      >
-        시작하기
-      </Button>
-    </div>
-  </div>
-</main>
-
+      {/* 버튼 섹션 - 화면 하단 */}
+      <div className="absolute bottom-16 left-1/2 transform -translate-x-1/2 w-full px-8">
+        <Link
+          href="/login"
+          className="block w-full max-w-md mx-auto py-4 text-lg text-white font-medium bg-blue-600 rounded-full text-center"
+        >
+          시작하기
+        </Link>
+      </div>
+    </main>
   )
 }

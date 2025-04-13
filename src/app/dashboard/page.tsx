@@ -6,12 +6,30 @@ import { doc, getDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { motion } from 'framer-motion'
 import { FaComments } from 'react-icons/fa'  // AI 채팅 아이콘 추가
-import Slider from 'react-slick'  // react-slick import 추가
+import { IoMdHeart } from 'react-icons/io'
+import { GiStomach, GiMedicines } from 'react-icons/gi'
+import { RiMentalHealthLine } from 'react-icons/ri'
+import { TbEye } from 'react-icons/tb'
+import Slider from 'react-slick'
+import "slick-carousel/slick/slick.css"
+import "slick-carousel/slick/slick-theme.css"
+import { healthTips } from '@/data/healthTips'
+import Link from 'next/link'
 
 export default function DashboardPage() {
   const router = useRouter()
   const [userData, setUserData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [currentTipIndex, setCurrentTipIndex] = useState(0)
+
+  // 건강 팁 자동 변경
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTipIndex((prevIndex) => (prevIndex + 1) % healthTips.length)
+    }, 10000) // 10초마다 변경
+
+    return () => clearInterval(interval)
+  }, [])
 
   useEffect(() => {
     const storedUsername = localStorage.getItem('username')
@@ -93,132 +111,331 @@ export default function DashboardPage() {
     dots: true,
     infinite: true,
     speed: 500,
-    slidesToShow: 1,
+    slidesToShow: 2,
     slidesToScroll: 1,
     arrows: true,
+    autoplay: true,
+    autoplaySpeed: 3000,
+    pauseOnHover: true,
+    responsive: [
+      {
+        breakpoint: 640,
+        settings: {
+          slidesToShow: 1,
+          slidesToScroll: 1
+        }
+      }
+    ]
   };
 
   const sampleSupplements = [
     {
+      id: 'omega3',
       name: "오메가3",
-      description: "오메가-3 지방산은 심혈관계 및 뇌기능 인지, 항염증 작용을 해요",
-      image: "https://via.placeholder.com/150"
+      description: "심혈관 건강과 인지 기능 개선에 도움을 줘요",
+      icon: <IoMdHeart className="w-8 h-8" />,
+      color: "from-red-400 to-red-600"
     },
     {
+      id: 'vitaminC',
       name: "비타민C",
-      description: "비타민C는 면역력 증진과 피부 건강에 도움을 줍니다.",
-      image: "https://via.placeholder.com/150"
+      description: "면역력 증진과 피부 건강에 도움을 줘요",
+      icon: <GiMedicines className="w-8 h-8" />,
+      color: "from-orange-400 to-orange-600"
     },
     {
-      name: "아연",
-      description: "아연은 면역 기능 및 세포 성장에 중요한 미네랄이에요.",
-      image: "https://via.placeholder.com/150"
-    },
-    {
+      id: 'probiotics',
       name: "프로바이오틱스",
-      description: "장 건강을 개선하고 면역력을 강화하는 유산균입니다.",
-      image: "https://via.placeholder.com/150"
+      description: "장 건강 개선과 면역력 강화에 좋아요",
+      icon: <GiStomach className="w-8 h-8" />,
+      color: "from-green-400 to-green-600"
     },
     {
+      id: 'lutein',
+      name: "루테인",
+      description: "눈 건강과 시력 보호에 도움이 돼요",
+      icon: <TbEye className="w-8 h-8" />,
+      color: "from-blue-400 to-blue-600"
+    },
+    {
+      id: 'magnesium',
       name: "마그네슘",
-      description: "마그네슘은 근육 기능과 신경 건강에 중요한 역할을 해요.",
-      image: "https://via.placeholder.com/150"
+      description: "스트레스 완화와 수면 개선에 효과적이에요",
+      icon: <RiMentalHealthLine className="w-8 h-8" />,
+      color: "from-purple-400 to-purple-600"
     }
   ];
 
   return (
-    <main className="min-h-screen bg-gray-50 p-4 md:p-8">
+    <main className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
       <motion.div
         initial={{ opacity: 0, y: 40 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 1.2, ease: 'easeOut' }}
-        className="max-w-3xl mx-auto space-y-6"
+        className="max-w-4xl mx-auto p-4 md:p-8 space-y-8"
       >
-        {/* 사용자 인사말 */}
-        <section className="text-center">
-          <h1 className="text-2xl font-bold text-blue-700">안녕하세요, {userData.name}님!</h1>
-          <p className="text-gray-600 mt-2 text-sm">당신의 건강을 위한 맞춤형 루틴을 준비했어요 ✨</p>
-        </section>
-
-        {/* 오늘의 추천 영양제 슬라이드 */}
-        <section className="bg-white rounded-xl shadow p-6 border border-gray-200">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-semibold text-gray-800">오늘의 추천 영양제</h2>
-            <button
-              onClick={() => router.push('/chat')}
-              className="flex items-center text-white bg-blue-600 hover:bg-blue-700 py-2 px-4 rounded-lg transition"
-            >
-              <FaComments className="mr-2" />
-              AI 채팅하러 가기
-            </button>
+        {/* 상단 헤더 */}
+        <header className="flex justify-between items-center">
+          <div>
+            <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-purple-600">
+              안녕하세요, {userData.name}님!
+            </h1>
+            <p className="text-gray-600 mt-2">
+              오늘도 건강한 하루 보내세요 ✨
+            </p>
           </div>
-
-          <Slider {...settings}>
-            {sampleSupplements.map((supp, index) => (
-              <div key={index} className="flex items-center gap-4 p-4 bg-gray-100 rounded-lg">
-                <div className="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center overflow-hidden">
-                  <img src={supp.image} alt={supp.name} className="w-12 h-12 object-cover" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-gray-900">{supp.name}</p>
-                  <p className="text-xs text-gray-500">{supp.description}</p>
-                </div>
-              </div>
-            ))}
-          </Slider>
-        </section>
-
-        {/* 내 정보 카드 */}
-        <section className="bg-white rounded-xl shadow p-6 border border-gray-200">
-          <h2 className="text-xl font-semibold mb-4 text-gray-800">내 정보</h2>
-          <p className="mb-2"><span className="font-semibold text-gray-700">이름:</span> {userData.name}</p>
-          <p className="mb-2"><span className="font-semibold text-gray-700">이메일:</span> {userData.email}</p>
-          {getSubscriptionStatus()}
-          <button
-            onClick={() => router.push('/membership-info')}
-            className="mt-4 w-full py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-          >
-            회원정보 자세히 보기
-          </button>
-        </section>
-
-        {/* 빠른 메뉴 */}
-        <section className="space-y-3">
-          <h2 className="text-xl font-semibold text-gray-800">빠른 이동</h2>
-          <div className="grid grid-cols-1 gap-5">
-            <button onClick={() => router.push('/chat')} className="bg-purple-100 text-purple-800 py-3 rounded-lg font-medium hover:bg-purple-200">
-              AI 건강 상담하기
-            </button>
-            <button onClick={() => router.push('/health-records')} className="bg-purple-100 text-purple-800 py-3 rounded-lg font-medium hover:bg-purple-200">
-              건강 기록
-            </button>
-            <button onClick={() => router.push('/nutrition-details')} className="bg-orange-100 text-orange-800 py-3 rounded-lg font-medium hover:bg-orange-200">
-              영양제 상세보기
-            </button>
-            <button onClick={() => router.push('/health-mindmap')} className="bg-green-100 text-green-800 py-3 rounded-lg font-medium hover:bg-green-200">
-              상담 내역
-            </button>
-            <button onClick={() => router.push('/subscription')} className="bg-blue-100 text-blue-800 py-3 rounded-lg font-medium hover:bg-blue-200">
-              구독 관리
-            </button>
-          </div>
-        </section>
-
-        {/* 로그아웃 버튼 - 건강 팁 바로 위에 위치 */}
-        <section className="text-center">
           <button
             onClick={handleLogout}
-            className="w-full py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+            className="text-gray-600 hover:text-gray-900 transition-colors"
           >
-            로그아웃
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
           </button>
+        </header>
+
+        {/* AI 채팅 바로가기 카드 */}
+        <motion.section
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={() => router.push('/chat')}
+          className="bg-gradient-to-r from-blue-500 to-purple-600 rounded-2xl shadow-lg p-6 text-white cursor-pointer group transition-all duration-300 hover:shadow-xl"
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold mb-2">AI 건강 상담</h2>
+              <p className="text-blue-100">맞춤형 건강 상담을 시작해보세요</p>
+            </div>
+            <div className="bg-white text-blue-600 rounded-full p-4 group-hover:bg-blue-50 transition-colors">
+              <FaComments className="w-6 h-6" />
+            </div>
+          </div>
+        </motion.section>
+
+        {/* 구독 상태 카드 */}
+        <section className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+          <h2 className="text-xl font-bold mb-4 text-gray-800">구독 상태</h2>
+          <div className="bg-gray-50 rounded-xl p-4">
+            {getSubscriptionStatus()}
+          </div>
         </section>
 
-        {/* 건강 팁 */}
-        <section className="text-sm text-gray-600 text-center pt-6 border-t">
-          매일 30분 이상의 가벼운 운동과 균형 잡힌 식사는 건강 유지에 도움이 됩니다.
+        {/* 오늘의 추천 영양제 */}
+        <section className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+          <h2 className="text-xl font-bold mb-6 text-gray-800">오늘의 추천 영양제</h2>
+          <div className="relative px-2">
+            <style jsx global>{`
+              .supplement-slider .slick-arrow {
+                width: 40px;
+                height: 40px;
+                background-color: rgba(255, 255, 255, 0.9);
+                border-radius: 50%;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+                z-index: 10;
+              }
+              .supplement-slider .slick-arrow:hover {
+                background-color: white;
+              }
+              .supplement-slider .slick-prev {
+                left: -20px;
+              }
+              .supplement-slider .slick-next {
+                right: -20px;
+              }
+              .supplement-slider .slick-prev:before,
+              .supplement-slider .slick-next:before {
+                color: #4B5563;
+                font-size: 24px;
+              }
+            `}</style>
+            <Slider {...settings} className="supplement-slider -mx-2">
+              {sampleSupplements.map((supp, index) => (
+                <div key={index} className="px-2 h-[200px]">
+                  <motion.div
+                    whileHover={{ scale: 1.03 }}
+                    className={`bg-gradient-to-br ${supp.color} rounded-xl p-5 text-white h-full flex flex-col cursor-pointer`}
+                    onClick={() => router.push(`/nutrition-details?id=${supp.id}`)}
+                  >
+                    <div className="flex items-start gap-4 flex-1">
+                      <div className="bg-white/20 rounded-lg p-3 backdrop-blur-sm">
+                        {supp.icon}
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="font-bold text-lg mb-1">{supp.name}</h3>
+                        <p className="text-sm text-white/90 line-clamp-2">{supp.description}</p>
+                      </div>
+                    </div>
+                    <div className="mt-auto flex justify-between items-center">
+                      <span className="text-xs bg-white/20 rounded-full px-3 py-1 backdrop-blur-sm">
+                        추천 섭취: 1일 1회
+                      </span>
+                      <span className="text-xs bg-white/20 rounded-full px-3 py-1 backdrop-blur-sm">
+                        자세히 보기
+                      </span>
+                    </div>
+                  </motion.div>
+                </div>
+              ))}
+            </Slider>
+          </div>
         </section>
+
+        {/* 건강기록 섹션 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* 건강기록하기 카드 */}
+          <motion.div
+            whileHover={{ scale: 1.02 }}
+            className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl shadow-lg overflow-hidden cursor-pointer"
+            onClick={() => router.push('/health-records')}
+          >
+            <div className="p-6 text-white">
+              <div className="flex items-center gap-4 mb-4">
+                <div className="p-3 bg-white/10 rounded-xl">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v2H7a1 1 0 100 2h2v2a1 1 0 102 0v-2h2a1 1 0 100-2h-2V7z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <h3 className="text-2xl font-bold">건강기록하기</h3>
+              </div>
+              <p className="text-white/80">오늘의 건강 상태, 운동, 식사 등을 기록하고 관리해보세요.</p>
+            </div>
+          </motion.div>
+
+          {/* 내 건강기록 보기 카드 */}
+          <motion.div
+            whileHover={{ scale: 1.02 }}
+            className="bg-gradient-to-br from-green-500 to-green-600 rounded-2xl shadow-lg overflow-hidden cursor-pointer"
+            onClick={() => router.push('/view-health-records')}
+          >
+            <div className="p-6 text-white">
+              <div className="flex items-center gap-4 mb-4">
+                <div className="p-3 bg-white/10 rounded-xl">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
+                    <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <h3 className="text-2xl font-bold">내 건강기록 보기</h3>
+              </div>
+              <p className="text-white/80">기록된 건강 데이터를 달력으로 확인하고 관리하세요.</p>
+            </div>
+          </motion.div>
+        </div>
+
+        {/* 빠른 메뉴 그리드 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <motion.div
+            whileHover={{ scale: 1.02 }}
+            className="bg-gradient-to-br from-orange-500 to-pink-600 rounded-2xl shadow-lg overflow-hidden cursor-pointer"
+            onClick={() => router.push('/nutrition-details')}
+          >
+            <div className="p-6 text-white">
+              <div className="flex items-center gap-4 mb-4">
+                <div className="p-3 bg-white/10 rounded-xl">
+                  <GiMedicines className="h-8 w-8" />
+                </div>
+                <h3 className="text-2xl font-bold">영양제 정보</h3>
+              </div>
+              <p className="text-white/80">맞춤 영양제 정보를 확인하고 관리해보세요.</p>
+            </div>
+          </motion.div>
+
+          <Link href="/health-mindmap" className="group block">
+            <motion.div
+              whileHover={{ scale: 1.02 }}
+              className="bg-gradient-to-br from-indigo-500 to-blue-600 rounded-2xl p-6 shadow-lg"
+            >
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-white/10 rounded-xl backdrop-blur-sm">
+                  <RiMentalHealthLine className="h-8 w-8 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-2xl font-bold text-white">AI 맞춤 건강관리</h2>
+                  <p className="text-blue-100 mt-1">AI가 분석한 사용자에 맞는 운동, 수면, 영양을 확인해보세요</p>
+                </div>
+              </div>
+            </motion.div>
+          </Link>
+
+          <motion.div
+            whileHover={{ scale: 1.02 }}
+            className="bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl shadow-lg overflow-hidden cursor-pointer"
+            onClick={() => router.push('/subscription')}
+          >
+            <div className="p-6 text-white">
+              <div className="flex items-center gap-4 mb-4">
+                <div className="p-3 bg-white/10 rounded-xl">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M5 5a3 3 0 015-2.236A3 3 0 0114.83 6H16a2 2 0 110 4h-5V9a1 1 0 10-2 0v1H4a2 2 0 110-4h1.17C5.06 5.687 5 5.35 5 5zm4 1V5a1 1 0 10-1 1h1zm3 0a1 1 0 10-1-1v1h1z" clipRule="evenodd" />
+                    <path d="M9 11H3v5a2 2 0 002 2h4v-7zM11 18h4a2 2 0 002-2v-5h-6v7z" />
+                  </svg>
+                </div>
+                <h3 className="text-2xl font-bold">구독 관리</h3>
+              </div>
+              <p className="text-white/80">구독 상태를 확인하고 관리하세요.</p>
+            </div>
+          </motion.div>
+
+          <motion.div
+            whileHover={{ scale: 1.02 }}
+            className="bg-gradient-to-br from-gray-700 to-gray-900 rounded-2xl shadow-lg overflow-hidden cursor-pointer"
+            onClick={() => router.push('/membership-info')}
+          >
+            <div className="p-6 text-white">
+              <div className="flex items-center gap-4 mb-4">
+                <div className="p-3 bg-white/10 rounded-xl">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <h3 className="text-2xl font-bold">회원 정보</h3>
+              </div>
+              <p className="text-white/80">내 정보를 확인하고 수정하세요.</p>
+            </div>
+          </motion.div>
+        </div>
+
+        {/* 건강 팁 */}
+        <motion.section 
+          className="text-center py-6"
+          key={currentTipIndex}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5 }}
+        >
+          <p className="text-sm text-gray-600">
+            {healthTips[currentTipIndex]}
+          </p>
+        </motion.section>
       </motion.div>
+
+      {/* 푸터 */}
+      <footer className="bg-white border-t border-gray-100 py-8">
+        <div className="max-w-5xl mx-auto px-4">
+          <div className="flex flex-col md:flex-row justify-between items-center gap-6">
+            <div className="text-center md:text-left">
+              <h3 className="text-3xl font-bold bg-gradient-to-r from-blue-500 to-blue-700 bg-clip-text text-transparent">
+                NUTRI-AI
+              </h3>
+              <p className="mt-2 text-gray-600">당신의 건강한 삶을 위한 AI 영양 파트너</p>
+            </div>
+            <div className="flex flex-col items-center md:items-end gap-2">
+              <div className="flex items-center gap-4">
+                <a href="#" className="text-gray-600 hover:text-blue-600 transition-colors">
+                  이용약관
+                </a>
+                <span className="text-gray-400">|</span>
+                <a href="#" className="text-gray-600 hover:text-blue-600 transition-colors">
+                  개인정보처리방침
+                </a>
+              </div>
+              <p className="text-sm text-gray-500">
+                © {new Date().getFullYear()} NUTRI-AI. All rights reserved.
+              </p>
+            </div>
+          </div>
+        </div>
+      </footer>
     </main>
   )
 }

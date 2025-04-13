@@ -183,6 +183,34 @@ export default function SubscriptionPage() {
           <li>상품 & 결제일 변경, 해지가 자유로워요!</li>
         </ul>
       </div>
+
+      {/* 푸터 */}
+      <footer className="bg-white border-t border-gray-100 py-8">
+        <div className="max-w-5xl mx-auto px-4">
+          <div className="flex flex-col md:flex-row justify-between items-center gap-6">
+            <div className="text-center md:text-left">
+              <h3 className="text-3xl font-bold bg-gradient-to-r from-blue-500 to-blue-700 bg-clip-text text-transparent">
+                NUTRI-AI
+              </h3>
+              <p className="mt-2 text-gray-600">당신의 건강한 삶을 위한 AI 영양 파트너</p>
+            </div>
+            <div className="flex flex-col items-center md:items-end gap-2">
+              <div className="flex items-center gap-4">
+                <a href="#" className="text-gray-600 hover:text-blue-600 transition-colors">
+                  이용약관
+                </a>
+                <span className="text-gray-400">|</span>
+                <a href="#" className="text-gray-600 hover:text-blue-600 transition-colors">
+                  개인정보처리방침
+                </a>
+              </div>
+              <p className="text-sm text-gray-500">
+                © {new Date().getFullYear()} NUTRI-AI. All rights reserved.
+              </p>
+            </div>
+          </div>
+        </div>
+      </footer>
     </main>
   )
 }

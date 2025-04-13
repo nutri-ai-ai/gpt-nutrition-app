@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/firebase'
 import { getDoc, getDocs, doc, collection, query, orderBy } from 'firebase/firestore'
-import { productList } from '@/lib/products'
+import { products } from '@/lib/products'
 import { OpenAI } from 'openai'
 
 // 영양제 추천 및 섭취량 계산을 위한 타입 정의
@@ -113,7 +113,6 @@ const calculateSupplementRecommendations = (
   // 기본 영양제 추천 로직
   if (userInfo.gender === '여성' && !subscribedProducts.includes('트리플러스 우먼')) {
     const baseDosage = 1;
-    // BMI, 운동 빈도, 나이를 고려한 섭취량 조정
     let adjustedDosage = baseDosage;
     
     if (bmi > 25 || userInfo.exerciseFrequency === '주 3회 이상') {
@@ -122,49 +121,25 @@ const calculateSupplementRecommendations = (
     if (age >= 50) {
       adjustedDosage += 1;
     }
-    // 최대 3알까지만 섭취
     adjustedDosage = Math.min(adjustedDosage, 3);
     
-    recommendations.push({
-      name: '트리플러스 우먼',
-      dailyDosage: adjustedDosage,
-      reason: '여성 건강을 위한 종합 영양제',
-      benefits: ['여성 호르몬 균형', '에너지 증진', '피부 건강'],
-      precautions: ['임신 중이거나 수유 중인 경우 의사와 상담 필요'],
-      dosageSchedule: calculateDosageSchedule('트리플러스 우먼', adjustedDosage, userInfo)
-    });
-  }
-
-  // BMI 기반 추천
-  if (bmi > 25 && !subscribedProducts.includes('밀크시슬')) {
-    const baseDosage = 1;
-    // BMI, 식습관을 고려한 섭취량 조정
-    let adjustedDosage = baseDosage;
-    
-    if (bmi >= 30) {
-      adjustedDosage += 1;
+    const product = products.find(p => p.name === '트리플러스 우먼');
+    if (product) {
+      recommendations.push({
+        name: product.name,
+        dailyDosage: adjustedDosage,
+        reason: '여성 건강을 위한 종합 영양제',
+        benefits: product.tags,
+        precautions: ['임신 중이거나 수유 중인 경우 의사와 상담 필요'],
+        dosageSchedule: calculateDosageSchedule(product.name, adjustedDosage, userInfo)
+      });
     }
-    if (userInfo.dietType === '불규칙한 식사' || userInfo.dietType === '과식') {
-      adjustedDosage += 1;
-    }
-    // 최대 3알까지만 섭취
-    adjustedDosage = Math.min(adjustedDosage, 3);
-    
-    recommendations.push({
-      name: '밀크시슬',
-      dailyDosage: adjustedDosage,
-      reason: '체중 관리와 간 건강 지원',
-      benefits: ['간 기능 개선', '체중 관리', '디톡스'],
-      precautions: ['간 질환이 있는 경우 의사와 상담 필요'],
-      dosageSchedule: calculateDosageSchedule('밀크시슬', adjustedDosage, userInfo)
-    });
   }
 
   // 시력 기반 추천
   if ((userInfo.leftVision < 0.8 || userInfo.rightVision < 0.8) && 
       !subscribedProducts.includes('루테인')) {
     const baseDosage = 1;
-    // 시력, 나이를 고려한 섭취량 조정
     let adjustedDosage = baseDosage;
     
     if (userInfo.leftVision < 0.5 || userInfo.rightVision < 0.5) {
@@ -173,24 +148,25 @@ const calculateSupplementRecommendations = (
     if (age >= 40) {
       adjustedDosage += 1;
     }
-    // 최대 3알까지만 섭취
     adjustedDosage = Math.min(adjustedDosage, 3);
     
-    recommendations.push({
-      name: '루테인',
-      dailyDosage: adjustedDosage,
-      reason: '시력 보호와 눈 건강 지원',
-      benefits: ['시력 보호', '눈 피로 감소', '황반변성 예방'],
-      precautions: ['과다 섭취 시 피부 변색 가능성'],
-      dosageSchedule: calculateDosageSchedule('루테인', adjustedDosage, userInfo)
-    });
+    const product = products.find(p => p.name === '루테인');
+    if (product) {
+      recommendations.push({
+        name: product.name,
+        dailyDosage: adjustedDosage,
+        reason: '시력 보호와 눈 건강 지원',
+        benefits: product.tags,
+        precautions: ['과다 섭취 시 피부 변색 가능성'],
+        dosageSchedule: calculateDosageSchedule(product.name, adjustedDosage, userInfo)
+      });
+    }
   }
 
   // 운동 빈도 기반 추천
   if (userInfo.exerciseFrequency === '주 3회 이상' && 
-      !subscribedProducts.includes('아르기닌')) {
+      !subscribedProducts.includes('아르기닌 500mg')) {
     const baseDosage = 2;
-    // 체중, 운동 빈도, 건강 목표를 고려한 섭취량 조정
     let adjustedDosage = baseDosage;
     
     if (userInfo.weight >= 80) {
@@ -199,17 +175,19 @@ const calculateSupplementRecommendations = (
     if (userInfo.healthGoal === '근육 증가' || userInfo.healthGoal === '체력 향상') {
       adjustedDosage += 1;
     }
-    // 최대 4알까지만 섭취
     adjustedDosage = Math.min(adjustedDosage, 4);
     
-    recommendations.push({
-      name: '아르기닌',
-      dailyDosage: adjustedDosage,
-      reason: '운동 성능 향상과 근육 회복',
-      benefits: ['운동 성능 향상', '근육 회복', '혈액 순환 개선'],
-      precautions: ['저혈압 환자는 주의 필요'],
-      dosageSchedule: calculateDosageSchedule('아르기닌', adjustedDosage, userInfo)
-    });
+    const product = products.find(p => p.name === '아르기닌 500mg');
+    if (product) {
+      recommendations.push({
+        name: product.name,
+        dailyDosage: adjustedDosage,
+        reason: '운동 성능 향상과 근육 회복',
+        benefits: product.tags,
+        precautions: ['저혈압 환자는 주의 필요'],
+        dosageSchedule: calculateDosageSchedule(product.name, adjustedDosage, userInfo)
+      });
+    }
   }
 
   // 수면의 질 기반 추천
@@ -224,160 +202,291 @@ const calculateSupplementRecommendations = (
     if (userInfo.exerciseFrequency === '주 3회 이상') {
       adjustedDosage += 1;
     }
-    // 최대 3알까지만 섭취
     adjustedDosage = Math.min(adjustedDosage, 3);
     
-    recommendations.push({
-      name: '마그네슘',
-      dailyDosage: adjustedDosage,
-      reason: '수면의 질 개선과 스트레스 완화',
-      benefits: ['수면의 질 개선', '스트레스 완화', '근육 이완'],
-      precautions: ['신장 질환이 있는 경우 의사와 상담 필요'],
-      dosageSchedule: calculateDosageSchedule('마그네슘', adjustedDosage, userInfo)
-    });
+    const product = products.find(p => p.name === '마그네슘');
+    if (product) {
+      recommendations.push({
+        name: product.name,
+        dailyDosage: adjustedDosage,
+        reason: '수면의 질 개선과 스트레스 완화',
+        benefits: product.tags,
+        precautions: ['신장 질환이 있는 경우 의사와 상담 필요'],
+        dosageSchedule: calculateDosageSchedule(product.name, adjustedDosage, userInfo)
+      });
+    }
   }
 
-  // 각 추천에 복용 시간 정보 추가
-  recommendations.forEach(rec => {
-    rec.dosageSchedule = calculateDosageSchedule(rec.name, rec.dailyDosage, userInfo);
-  });
+  // 면역력 강화 추천
+  if (!subscribedProducts.includes('비타민 D')) {
+    const baseDosage = 1;
+    let adjustedDosage = baseDosage;
+    
+    if (age >= 50) {
+      adjustedDosage += 1;
+    }
+    adjustedDosage = Math.min(adjustedDosage, 2);
+    
+    const product = products.find(p => p.name === '비타민 D');
+    if (product) {
+      recommendations.push({
+        name: product.name,
+        dailyDosage: adjustedDosage,
+        reason: '면역력 강화와 뼈 건강 지원',
+        benefits: product.tags,
+        precautions: ['고용량 복용 시 의사와 상담 필요'],
+        dosageSchedule: calculateDosageSchedule(product.name, adjustedDosage, userInfo)
+      });
+    }
+  }
 
   return recommendations;
 };
 
+// 새로운 타입 정의 추가
+type FoodRecommendation = {
+  category: string;
+  foods: Array<{
+    name: string;
+    nutrients: string[];
+    benefits: string[];
+    servingSize: string;
+  }>;
+  reason: string;
+};
+
+type ExerciseRoutine = {
+  type: string;
+  exercises: Array<{
+    name: string;
+    duration: string;
+    intensity: string;
+    description: string;
+    benefits: string[];
+  }>;
+  frequency: string;
+  precautions: string[];
+};
+
+// 음식 추천 계산 함수
+const calculateFoodRecommendations = (userInfo: UserHealthInfo): FoodRecommendation[] => {
+  const recommendations: FoodRecommendation[] = [];
+  const bmi = userInfo.weight / ((userInfo.height / 100) ** 2);
+
+  // BMI 기반 추천
+  if (bmi > 25) {
+    recommendations.push({
+      category: '체중 관리를 위한 식품',
+      foods: [
+        {
+          name: '퀴노아',
+          nutrients: ['단백질', '식이섬유', '철분'],
+          benefits: ['포만감 증진', '혈당 조절', '체중 관리'],
+          servingSize: '1끼니당 50g'
+        },
+        {
+          name: '렌틸콩',
+          nutrients: ['단백질', '식이섬유', '엽산'],
+          benefits: ['포만감 유지', '콜레스테롤 관리'],
+          servingSize: '1끼니당 40g'
+        }
+      ],
+      reason: '체중 관리와 포만감 유지를 위한 저칼로리 고단백 식품'
+    });
+  }
+
+  // 운동 빈도 기반 추천
+  if (userInfo.exerciseFrequency === '주 3회 이상') {
+    recommendations.push({
+      category: '운동 성과 개선을 위한 식품',
+      foods: [
+        {
+          name: '고구마',
+          nutrients: ['복합탄수화물', '베타카로틴', '비타민C'],
+          benefits: ['지구력 향상', '근육 글리코겐 보충'],
+          servingSize: '1회 150g'
+        },
+        {
+          name: '닭가슴살',
+          nutrients: ['단백질', '비타민B6', '나이아신'],
+          benefits: ['근육 회복', '단백질 보충'],
+          servingSize: '1회 120g'
+        }
+      ],
+      reason: '운동 전후 영양 보충과 근육 회복 지원'
+    });
+  }
+
+  return recommendations;
+};
+
+// 운동 루틴 추천 계산 함수
+const calculateExerciseRoutines = (userInfo: UserHealthInfo): ExerciseRoutine[] => {
+  const routines: ExerciseRoutine[] = [];
+  const bmi = userInfo.weight / ((userInfo.height / 100) ** 2);
+
+  // 기본 유산소 운동
+  routines.push({
+    type: '유산소 운동',
+    exercises: [
+      {
+        name: '빠르게 걷기',
+        duration: '30분',
+        intensity: '중간',
+        description: '심박수를 올리되 대화가 가능한 속도 유지',
+        benefits: ['심폐 기능 향상', '기초 체력 증진', '칼로리 소모']
+      },
+      {
+        name: '실내 자전거',
+        duration: '20분',
+        intensity: '중간-높음',
+        description: '저항을 조절하며 페달링',
+        benefits: ['하체 근력 강화', '관절 부담 최소화']
+      }
+    ],
+    frequency: '주 3-4회',
+    precautions: ['관절에 통증이 있으면 즉시 중단', '충분한 준비운동 필수']
+  });
+
+  // BMI나 건강 목표에 따른 추가 운동
+  if (bmi > 25 || userInfo.healthGoal === '체중 감량') {
+    routines.push({
+      type: 'HIIT 운동',
+      exercises: [
+        {
+          name: '버피 테스트',
+          duration: '30초 운동, 30초 휴식 x 4세트',
+          intensity: '높음',
+          description: '전신 운동으로 최대 칼로리 소모',
+          benefits: ['체지방 감소', '심폐 지구력 향상']
+        },
+        {
+          name: '마운틴 클라이머',
+          duration: '30초 운동, 30초 휴식 x 4세트',
+          intensity: '높음',
+          description: '플랭크 자세에서 무릎 번갈아 당기기',
+          benefits: ['코어 강화', '체지방 감소']
+        }
+      ],
+      frequency: '주 2-3회',
+      precautions: ['초보자는 세트 수 조절 필요', '충분한 수분 섭취 필수']
+    });
+  }
+
+  return routines;
+};
+
 export async function POST(req: Request) {
   try {
-    const { message, userInfo, conversation } = await req.json()
-
-    const apiKey = process.env.OPENAI_API_KEY
-    if (!apiKey) {
-      return NextResponse.json({ error: 'API 키를 찾을 수 없습니다.' }, { status: 500 })
-    }
-
-    // 🔹 병렬로 데이터 조회
-    const [userDoc, recSnapshot, subSnapshot] = await Promise.all([
-      userInfo?.username ? getDoc(doc(db, 'users', userInfo.username)) : Promise.resolve(null),
-      userInfo?.username ? getDocs(query(collection(db, 'users', userInfo.username, 'recommendations'), orderBy('createdAt', 'desc'))) : Promise.resolve(null),
-      userInfo?.username ? getDocs(query(collection(db, 'users', userInfo.username, 'subscriptions'), orderBy('createdAt', 'desc'))) : Promise.resolve(null)
-    ])
-
-    // 🔹 구독 중인 제품 목록 처리
-    const subscribedProducts: string[] = []
-    if (subSnapshot) {
-      subSnapshot.forEach(doc => {
-        const data = doc.data()
-        if (data.status === 'active' && data.supplement?.productName) {
-          subscribedProducts.push(data.supplement.productName)
-        }
-      })
-    }
-
-    // 사용자 정보 기반 영양제 추천 계산
-    console.log('받은 사용자 정보:', userInfo);
-    
-    if (!userInfo || !userInfo.gender || !userInfo.height || !userInfo.weight) {
-      console.log('사용자 정보 누락:', { userInfo });
-      return NextResponse.json({
-        reply: "죄송합니다. 정확한 추천을 위해 사용자 정보가 필요합니다.",
-        supplements: []
-      });
-    }
-
-    // OpenAI API 호출 전에 추천 영양제 계산
-    const supplementRecommendations = calculateSupplementRecommendations(userInfo, subscribedProducts);
-    console.log('계산된 추천 영양제 (서버):', supplementRecommendations);
-
-    // 추천 영양제 정보를 supplements 배열로 변환
-    const supplements = supplementRecommendations.map((rec, index) => {
-      const product = productList.find(p => p.name === rec.name);
-      if (!product) {
-        console.log('제품을 찾을 수 없음:', rec.name);
-        return null;
-      }
-      
-      return {
-        id: `${Date.now()}-${index}`,
-        text: `${rec.name}: ${rec.dailyDosage}알`,
-        name: rec.name,
-        productName: rec.name,
-        dailyDosage: rec.dailyDosage,
-        dosageSchedule: rec.dosageSchedule,
-        pricePerUnit: product.pricePerUnit,
-        reason: rec.reason,
-        benefits: rec.benefits,
-        precautions: rec.precautions
-      };
-    }).filter(Boolean);
-
-    console.log('변환된 supplements 배열 (서버):', supplements);
+    const { message, userInfo, username, conversation } = await req.json();
 
     // OpenAI 클라이언트 초기화
     const openai = new OpenAI({
-      apiKey: apiKey,
+      apiKey: process.env.OPENAI_API_KEY
     });
 
-    // 시스템 프롬프트 설정
-    const systemPrompt = `
-당신은 Nutri AI라는 이름의 영양제 상담 전문가입니다.
+    // 사용자의 구독 정보 가져오기
+    let subscribedProducts: string[] = [];
+    if (username) {
+      const subRef = collection(db, "users", username, "subscriptions");
+      const q = query(subRef, orderBy("createdAt", "desc"));
+      const querySnapshot = await getDocs(q);
+      subscribedProducts = querySnapshot.docs
+        .filter(doc => doc.data().status === "active")
+        .map(doc => doc.data().supplement?.productName || "");
+    }
 
-사용 가능한 제품 목록:
-${productList.map(p => `- ${p.name} (${p.tags.join(', ')})`).join('\n')}
+    // 영양제 추천 계산
+    const supplementRecommendations = calculateSupplementRecommendations(userInfo, subscribedProducts);
+    
+    // 영양제 정보를 products 배열에서 찾아서 보강
+    const supplements = supplementRecommendations.map(rec => {
+      const product = products.find(p => p.name === rec.name);
+      const monthlyDosage = rec.dailyDosage * 30; // 한 달 복용량
+      const dailyPrice = (product?.pricePerUnit || 0) * rec.dailyDosage; // 하루 복용 가격
+      const monthlyPrice = dailyPrice * 30; // 한 달 구독 가격
+      
+      return {
+        id: `${Date.now()}-${Math.random()}`,
+        name: rec.name,
+        description: product?.description || '',
+        category: product?.category || '',
+        pricePerUnit: product?.pricePerUnit || 0,
+        monthlyPrice: monthlyPrice || 0, // 기본값 추가
+        monthlyDosage,
+        tags: product?.tags || [],
+        reason: rec.reason,
+        dailyDosage: rec.dailyDosage,
+        dosageSchedule: rec.dosageSchedule,
+        benefits: rec.benefits,
+        precautions: rec.precautions
+      };
+    });
 
-목표:
-1. 사용자의 건강 고민을 듣고 위 제품 목록에서 적절한 영양제를 추천해주세요.
-2. 추천할 때는 반드시 "[추천]" 섹션을 사용하여 제품명과 하루 섭취량을 명확히 표시해주세요.
-   예시: "[추천]\n- 비타민C 1000: 1알 [아침]\n- 오메가3: 2알 [아침 1알, 저녁 1알]"
-3. 가격 계산이나 월구독 금액 제안은 하지 마세요.
-4. 모든 답변은 한국어로 작성하세요.
-5. 중복 추천은 절대 하지 마세요.
-6. 외부 브랜드는 언급하지 마세요.
-7. 추천은 개인화된 섭취량, 성별, 키, 몸무게 등 고려하세요.
-8. 궁금증이 끝나면 구독 신청을 제안하세요.
-9. 사용자가 이미 구독 중인 제품은 고려하여 다른 제품을 추천하세요.
-10. 사용자의 개인 정보를 기반으로 정확한 섭취량을 제안하세요.
-11. 반드시 위 제품 목록에 있는 정확한 제품명을 사용하세요.
-12. 복용 시간을 반드시 표시하고, 하루 2알 이상인 경우 시간대별로 나누어 복용하도록 안내하세요.
+    // 음식과 운동 추천 계산
+    const foodRecommendations = calculateFoodRecommendations(userInfo);
+    const exerciseRoutines = calculateExerciseRoutines(userInfo);
 
-현재 추천 가능한 영양제 정보:
-${supplementRecommendations.map(rec => 
-  `- ${rec.name}: ${rec.dailyDosage}알
-* 복용 시간: ${rec.dosageSchedule.map(s => `${s.time} ${s.amount}알`).join(', ')}
-* 추천 이유: ${rec.reason}
-* 주요 효과: ${rec.benefits.join(', ')}
-* 주의사항: ${rec.precautions.join(', ')}`
-).join('\n\n')}
-`
-
-    // 대화 메시지 배열 생성
-    const messages = conversation.map((msg: { sender: string; content: string }) => ({
-      role: msg.sender === "user" ? "user" : "assistant",
-      content: msg.content
-    }));
-
-    // OpenAI API 호출
-    const response = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
+    // AI 응답 생성
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4-turbo-preview",
       messages: [
-        { role: "system", content: systemPrompt },
-        ...messages,
-        { role: "user", content: message }
+        {
+          role: "system",
+          content: `당신은 Nutri AI 영양 상담 전문가입니다. 답변은 항상 간단명료하게 제공하되, 다음 형식을 따르세요:
+
+1. 건강 상태 요약 (1-2문장)
+2. 개선이 필요한 부분 (1-2문장)
+3. 추천 사항 (영양제/운동/식단)
+
+영양제 추천 시 반드시 '[추천]' 마커를 사용하고 각 영양제의 이름과 복용량을 명확히 표시하세요.
+예시: [추천]\n- 마그네슘: 1알\n- 비타민D: 2알
+
+답변은 항상 한국어로 작성하고, 전문 용어는 가능한 쉽게 설명하세요.`
+        },
+        ...conversation.map((msg: any) => ({
+          role: msg.role,
+          content: msg.content
+        })),
+        {
+          role: "user",
+          content: message
+        }
       ],
       temperature: 0.7,
-      max_tokens: 1000,
+      max_tokens: 500 // 토큰 수 제한으로 응답 속도 개선
     });
 
-    const reply = response.choices[0].message.content;
+    let aiReply = completion.choices[0].message.content || "";
 
-    return NextResponse.json({
-      reply,
+    // 영양제 추천이 있는 경우, 추천 정보를 응답에 포함
+    if (supplements.length > 0 && !aiReply.includes('[추천]')) {
+      const recommendationsText = supplements
+        .map(rec => `- ${rec.name}: ${rec.dailyDosage}알 (월 ${rec.monthlyPrice.toLocaleString()}원)`)
+        .join('\n');
+      aiReply += `\n\n[추천]\n${recommendationsText}`;
+    }
+
+    console.log('응답 데이터:', { 
+      reply: aiReply,
       supplements,
-      error: null
+      foodRecommendations,
+      exerciseRoutines 
     });
+
+    // 응답 반환
+    return NextResponse.json({
+      reply: aiReply,
+      supplements,
+      foodRecommendations,
+      exerciseRoutines
+    });
+
   } catch (error) {
-    console.error('Error:', error)
+    console.error('API 오류:', error);
     return NextResponse.json(
       { error: '서버 오류가 발생했습니다.' },
       { status: 500 }
-    )
+    );
   }
 }
