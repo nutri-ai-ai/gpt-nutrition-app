@@ -696,17 +696,84 @@ export default function AIHealthRecommendPage() {
   }
 
   const addToGlobalCart = (product: any) => {
+    // 복용 스케줄 생성 (영양제 별로 적절한 스케줄 생성)
+    const dosageSchedule = generateDosageSchedule(product.id);
+    
+    // ClientLayout과 호환되는 데이터 구조로 변환
     const event = new CustomEvent('addToHealthSubscription', {
       detail: {
         id: product.id,
         name: product.name,
         description: product.description,
-        category: 'supplements',
+        category: product.category || 'supplements',
         pricePerUnit: product.pricePerUnit,
         tags: product.tags,
+        // ClientLayout에서 필요한 추가 필드들
+        dailyDosage: 1, // 기본 1정
+        dosageSchedule: dosageSchedule,
+        monthlyPrice: Math.floor(product.pricePerUnit * 30 * 0.85), // 15% 할인 가격
+        benefits: product.benefits || [],
+        precautions: product.precautions || []
       }
-    })
-    window.dispatchEvent(event)
+    });
+    window.dispatchEvent(event);
+  }
+  
+  // 영양제 별 맞춤 복용 스케줄 생성 함수
+  const generateDosageSchedule = (productId: string) => {
+    // 기본 스케줄
+    const defaultSchedule = [{
+      time: "아침",
+      amount: 1,
+      withMeal: true,
+      reason: "일반적으로 영양제는 식사와 함께 복용하면 흡수가 잘 됩니다."
+    }];
+    
+    // 제품별 맞춤 스케줄
+    switch (productId) {
+      case 'magnesium': // 마그네슘
+        return [{
+          time: "취침전",
+          amount: 1,
+          withMeal: false,
+          reason: "마그네슘은 수면에 도움을 주므로 취침 전 복용이 효과적입니다."
+        }];
+        
+      case 'vitamin-d': // 비타민D
+        return [{
+          time: "아침",
+          amount: 1,
+          withMeal: true,
+          reason: "비타민D는 지용성 비타민으로 식사와 함께 복용 시 흡수가 잘 됩니다."
+        }];
+        
+      case 'omega3': // 오메가3
+        return [{
+          time: "아침",
+          amount: 1,
+          withMeal: true,
+          reason: "오메가3는 지용성 영양소로 식사 중 지방과 함께 섭취하면 흡수율이 높아집니다."
+        }];
+        
+      case 'probiotics': // 프로바이오틱스
+        return [{
+          time: "아침",
+          amount: 1,
+          withMeal: false,
+          reason: "프로바이오틱스는 공복에 복용하면 위산의 영향을 덜 받아 효과적입니다."
+        }];
+        
+      case 'lutein': // 루테인
+        return [{
+          time: "점심",
+          amount: 1,
+          withMeal: true,
+          reason: "루테인은 지용성 성분으로 식사와 함께 복용하면 흡수가 잘 됩니다."
+        }];
+        
+      default:
+        return defaultSchedule;
+    }
   }
 
   if (loading) {

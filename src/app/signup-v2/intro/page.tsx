@@ -4,6 +4,8 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { useAuth } from '@/context/auth-context'
+import { doc, getDoc } from 'firebase/firestore'
+import { db } from '@/firebase/config'
 
 export default function IntroV2Page() {
   const router = useRouter()
@@ -17,75 +19,60 @@ export default function IntroV2Page() {
   const fireworksContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    let isMounted = true
-    const initializeSession = async () => {
-      try {
-        console.log('인트로 페이지 초기화 시작')
-        // 세션 체크
-        const lastActiveTime = localStorage.getItem('last_active_time')
-        const tempId = localStorage.getItem('tempId')
-        const emailVerified = localStorage.getItem('email_verified')
-        const email = localStorage.getItem('email')
+    const checkSession = async () => {
+      const tempId = localStorage.getItem('tempId')
+      const lastActiveTime = localStorage.getItem('last_active_time')
+      // 이메일 인증 체크 로직 제거
+      
+      if (!tempId || !lastActiveTime) {
+        router.push('/signup-v2/email')
+        return
+      }
 
-        console.log('세션 상태:', { lastActiveTime, tempId, emailVerified, email })
-
-        if (!lastActiveTime || !tempId || emailVerified !== 'true') {
-          console.log('세션 검증 실패:', { lastActiveTime, tempId, emailVerified })
-          router.push('/signup-v2/email')
-          return
-        }
-
-        const now = Date.now()
-        const diff = now - parseInt(lastActiveTime)
-        
-        console.log('세션 유효 시간(분):', Math.round(diff / (60 * 1000)))
-        
-        if (diff >= 30 * 60 * 1000) {
-          console.log('세션 만료:', diff)
-          localStorage.removeItem('last_active_time')
-          localStorage.removeItem('tempId')
-          localStorage.removeItem('email_verified')
-          router.push('/signup-v2/email')
-          return
-        }
-        
-        // 세션 활성 시간 업데이트
-        localStorage.setItem('last_active_time', now.toString())
-        console.log('세션 활성 시간 업데이트:', now)
-        
-        // 스토어드 이름 가져오기
-        const storedName = localStorage.getItem('signup_name')
-        if (storedName && isMounted) {
-          setName(storedName)
-          // 사용자 정보 업데이트
-          await updateUserSignupData({
-            name: storedName,
-            signupStep: 'intro'
-          }).catch(error => {
-            console.error('사용자 데이터 업데이트 오류:', error)
-            if (isMounted) setError('데이터 업데이트 중 오류가 발생했습니다')
-          })
-        }
-        
-        if (isMounted) {
-          setMounted(true)
-          setIsLoading(false)
-        }
-      } catch (error) {
-        console.error('초기화 오류:', error)
-        if (isMounted) {
-          setError('페이지 초기화 중 오류가 발생했습니다')
-          setIsLoading(false)
+      // 30분 초과 시 세션 만료
+      const lastActive = parseInt(lastActiveTime)
+      const now = Date.now()
+      const diffMinutes = (now - lastActive) / (1000 * 60)
+      
+      if (diffMinutes > 30) {
+        // 세션 만료 시 정리
+        localStorage.removeItem('tempId')
+        localStorage.removeItem('last_active_time')
+        // 이메일 관련 체크 제거
+        router.push('/signup-v2/email')
+        return
+      }
+      
+      // 세션 활성 시간 업데이트
+      localStorage.setItem('last_active_time', now.toString())
+      
+      // 사용자 이름 가져오기
+      const storedName = localStorage.getItem('signup_name')
+      if (storedName) {
+        setName(storedName)
+      } else {
+        // localStorage에 없으면 Firestore에서 가져오기
+        try {
+          const userRef = doc(db, 'users', tempId)
+          const userDoc = await getDoc(userRef)
+          
+          if (userDoc.exists()) {
+            const userData = userDoc.data()
+            if (userData.name) {
+              setName(userData.name)
+            }
+          }
+        } catch (error) {
+          console.error('사용자 데이터 로드 오류:', error)
         }
       }
+      
+      setIsLoading(false)
+      setMounted(true)
     }
-
-    initializeSession()
-
-    return () => {
-      isMounted = false
-    }
-  }, [router, updateUserSignupData])
+    
+    checkSession()
+  }, [router])
 
   useEffect(() => {
     if (!mounted) return
@@ -141,7 +128,7 @@ export default function IntroV2Page() {
     '#87CEFA', '#DDA0DD'
   ]
 
-  if (!mounted) {
+  if (isLoading) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-gradient-to-b from-blue-50 to-white">
         <div className="flex flex-col items-center">

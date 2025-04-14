@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/context/auth-context'
-import { doc, getDoc, getFirestore } from 'firebase/firestore'
+import { doc, getDoc, getFirestore, query, where, collection, getDocs } from 'firebase/firestore'
 import { db } from '@/firebase/config'
 import { auth } from '@/firebase/config'
 import Script from 'next/script'
@@ -30,7 +30,7 @@ const EMAIL_DOMAINS = [
 
 export default function AccountSetupPage() {
   const router = useRouter()
-  const { createAccount, checkUsername, checkEmail, checkPhoneNumber } = useAuth()
+  const { createAccount, checkUsername, checkEmail, checkPhoneNumber, signIn } = useAuth()
   const [formData, setFormData] = useState({
     username: '',
     password: '',
@@ -51,6 +51,7 @@ export default function AccountSetupPage() {
   const [scriptLoaded, setScriptLoaded] = useState(false)
   const [isUsernameAvailable, setIsUsernameAvailable] = useState(false)
   const [isUsernameChecking, setIsUsernameChecking] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   // 컴포넌트 마운트 시 임시 사용자 ID와 설문 완료 여부 확인
   useEffect(() => {
@@ -58,9 +59,9 @@ export default function AccountSetupPage() {
       setIsLoading(true)
       const tempId = localStorage.getItem('tempId')
       const lastActiveTime = localStorage.getItem('last_active_time')
-      const emailVerified = localStorage.getItem('email_verified')
+      // 이메일 인증 체크 제거
       
-      if (!tempId || !lastActiveTime || !emailVerified) {
+      if (!tempId || !lastActiveTime) {
         router.push('/signup-v2/email')
         return
       }
@@ -73,7 +74,7 @@ export default function AccountSetupPage() {
       if (diffMinutes > 30) {
         localStorage.removeItem('tempId')
         localStorage.removeItem('last_active_time')
-        localStorage.removeItem('email_verified')
+        // 이메일 관련 체크 제거
         router.push('/signup-v2/email')
         return
       }
@@ -285,68 +286,105 @@ export default function AccountSetupPage() {
 
   // 계정 생성 처리
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+    e.preventDefault();
     
-    if (!canSubmit()) {
-      setError('모든 필수 항목을 입력하고 중복 확인을 완료해주세요.')
-      return
+    if (!canSubmit() || isSubmitting) {
+      return;
     }
     
-    setIsLoading(true)
-    setError('')
+    setError('');
+    setIsSubmitting(true);
     
     try {
       if (!tempUserId) {
-        setError('세션 정보가 유효하지 않습니다. 다시 시도해주세요.')
-        setIsLoading(false)
-        return
+        throw new Error('사용자 정보를 찾을 수 없습니다');
       }
       
-      // 비밀번호 불일치 확인
-      if (formData.password !== formData.confirmPassword) {
-        setError('비밀번호가 일치하지 않습니다')
-        setIsLoading(false)
-        return
+      console.log('계정 생성 시작:', { 
+        username: formData.username,
+        phoneNumber: formData.phoneNumber,
+        tempId: tempUserId 
+      });
+      
+      // Firestore의 사용자 문서를 미리 체크
+      const userRef = doc(db, 'users', tempUserId);
+      const userSnapshot = await getDoc(userRef);
+      
+      if (!userSnapshot.exists()) {
+        throw new Error('사용자 설문 데이터를 찾을 수 없습니다.');
       }
       
-      // 유저네임, 패스워드, 주소 정보로 계정 생성
-      const addressInfo = {
-        address: formData.address,
-        addressDetail: formData.addressDetail,
-        zonecode: formData.zonecode
-      }
-
-      // 핸드폰 번호가 입력된 경우에만 전달
-      const phoneNumber = formData.phoneNumber.trim() || ''
+      const userData = userSnapshot.data();
       
-      // 계정 생성
-      const success = await createAccount(
-        formData.username,
+      // 이미 계정이 생성되었는지 확인
+      const existingUserQuery = query(
+        collection(db, "users"), 
+        where("username", "==", formData.username.trim())
+      );
+      const existingUserDocs = await getDocs(existingUserQuery);
+      
+      if (!existingUserDocs.empty) {
+        throw new Error("이미 등록된 아이디입니다. 다시 중복 확인을 해주세요.");
+      }
+      
+      // 회원 가입 - 계정 생성 (원래 호출 방식으로 변경)
+      const user = await createAccount(
+        formData.username.trim(),  // name으로 저장될 username
         formData.password,
-        phoneNumber,
+        formData.phoneNumber,
         tempUserId,
-        addressInfo
-      )
+        {
+          address: formData.address,
+          addressDetail: formData.addressDetail || '',
+          zonecode: formData.zonecode || '',
+        }
+      );
       
-      if (success) {
-        // 로컬 스토리지 데이터 제거
-        localStorage.removeItem('tempId')
-        localStorage.removeItem('last_active_time')
-        localStorage.removeItem('email_verified')
-        localStorage.removeItem('email')
+      if (user) {
+        console.log('계정 생성 성공');
         
-        // 대시보드로 이동
-        router.push('/dashboard')
+        try {
+          // 자동 로그인 처리
+          await signIn(formData.username.trim(), formData.password);
+          console.log('자동 로그인 성공');
+          
+          // --- 로컬 스토리지 세션 정보 정리 (tempId 제거 제외) ---
+          // localStorage.removeItem('tempId'); // 이 줄을 주석 처리하거나 삭제
+          localStorage.removeItem('last_active_time');
+          localStorage.removeItem('email_verified');
+          localStorage.removeItem('email');
+          localStorage.removeItem('signup_name'); // 회원가입 시작 시 저장한 이름도 제거
+          // 필요한 경우 survey 단계 등에서 저장된 다른 임시 데이터도 제거
+          console.log('임시 로컬 스토리지 정보 정리 완료 (tempId 제외)');
+          // --- 수정 끝 ---
+          
+          // 사용자 정보를 로컬 스토리지에 저장하는 로직은 createAccount 내부로 이동했으므로 여기서는 중복 제거
+          
+          // 대시보드로 이동 (반드시 여기서만 라우팅 처리)
+          console.log('대시보드로 리디렉션 시작...');
+          router.push('/dashboard');
+          return; // 함수를 여기서 종료하여 중복 라우팅 방지
+        } catch (loginError) {
+          console.error('자동 로그인 실패:', loginError);
+          // 로그인 실패 시에도 대시보드로 이동 시도 (선택적)
+          // 또는 오류 메시지 표시 후 로그인 페이지로 이동 등 처리
+          // 현재 로직은 로그인 실패 시에도 아래 catch 블록으로 가지 않고 대시보드로 이동하게 됨
+          // 필요하다면 로그인 실패 시 다른 처리를 추가
+          console.log('로그인 실패했지만 대시보드로 리디렉션 시도...');
+           router.push('/dashboard');
+           return;
+        }
       } else {
-        setError('계정 생성 중 오류가 발생했습니다')
+         // createAccount가 false를 반환한 경우 (이론상 현재 로직에서는 발생하지 않음)
+        setError('계정 생성에 실패했습니다. 다시 시도해주세요.');
+        setIsSubmitting(false);
       }
-    } catch (error: any) {
-      console.error('계정 생성 오류:', error)
-      setError(`계정 생성 중 오류: ${error.message || '알 수 없는 오류'}`)
-    } finally {
-      setIsLoading(false)
+    } catch (error: any) { // createAccount에서 throw된 오류 처리
+      console.error('handleSubmit 오류:', error);
+      setError(error.message || '계정 생성 중 오류가 발생했습니다.');
+      setIsSubmitting(false);
     }
-  }
+  };
 
   // 임시 사용자 ID가 없으면 로딩 표시 또는 리다이렉트
   if (!tempUserId) {
@@ -602,10 +640,10 @@ export default function AccountSetupPage() {
             {/* 제출 버튼 */}
             <button
               type="submit"
-              disabled={!canSubmit()}
+              disabled={!canSubmit() || isSubmitting}
               className="w-full mt-8 py-3 bg-blue-500 text-white text-sm font-medium rounded-lg hover:bg-blue-600 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
             >
-              완료
+              {isSubmitting ? '처리중...' : '완료'}
             </button>
           </form>
         </div>

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { doc, getDoc } from 'firebase/firestore'
+import { doc, getDoc, deleteDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { motion } from 'framer-motion'
 import { FaComments } from 'react-icons/fa'  // AI 채팅 아이콘 추가
@@ -31,54 +31,89 @@ export default function DashboardPage() {
     return () => clearInterval(interval)
   }, [])
 
+  // --- 사용자 데이터 로드 및 임시 데이터 정리 useEffect ---
   useEffect(() => {
-    const storedUserId = localStorage.getItem('uid')
-    // 로컬스토리지에서 uid 확인
-    if (!storedUserId) {
-      router.push('/login')  // uid 없으면 로그인 페이지로 리디렉션
-      return
-    }
+    const initializeDashboard = async () => {
+      setLoading(true); // 로딩 시작
 
-    // Firestore에서 사용자 데이터 조회
-    const getUserData = async () => {
+      // --- 임시 데이터 정리 로직 ---
+      const tempId = localStorage.getItem('tempId');
+      if (tempId) {
+        console.log(`대시보드 진입: 임시 문서 삭제 시도 (tempId: ${tempId})`);
+        const tempUserRef = doc(db, 'users', tempId);
+        try {
+          await deleteDoc(tempUserRef);
+          console.log(`임시 사용자 문서 삭제 성공 (tempId: ${tempId})`);
+        } catch (deleteError) {
+          console.error(`임시 사용자 문서 삭제 실패 (tempId: ${tempId}):`, deleteError);
+          // 실패해도 계속 진행
+        } finally {
+          // 성공/실패 여부와 관계없이 로컬 스토리지에서 tempId 제거
+          localStorage.removeItem('tempId');
+          console.log('로컬 스토리지에서 tempId 제거 완료');
+        }
+      }
+      // --- 임시 데이터 정리 끝 ---
+
+      // --- 최종 사용자 데이터 로드 (username 기반) ---
+      const storedUsername = localStorage.getItem('username'); // username 가져오기
+      if (!storedUsername) {
+        console.log('로그인 정보(username) 없음. 로그인 페이지로 이동합니다.');
+        router.push('/login');
+        setLoading(false); // username 없으면 로딩 종료하고 리턴
+        return;
+      }
+
       try {
-        const docRef = doc(db, 'users', storedUserId)
-        const docSnapshot = await getDoc(docRef)
+        // username을 문서 ID로 사용하여 사용자 데이터 조회
+        const userDocRef = doc(db, 'users', storedUsername);
+        const docSnapshot = await getDoc(userDocRef);
 
-        // 사용자가 존재하지 않으면 로그인 페이지로 리디렉션
         if (docSnapshot.exists()) {
-          const userData = docSnapshot.data()
-          
-          // 사용자 인증 방식 확인
-          if (userData.authMethod === 'email') {
-            console.log('이메일 인증 사용자입니다')
-          } else if (userData.authMethod === 'phone') {
-            console.log('핸드폰 인증 사용자입니다')
-          }
-          
-          setUserData(docSnapshot.data())
+          setUserData(docSnapshot.data());
+          console.log('사용자 데이터 로드 성공:', docSnapshot.data());
         } else {
-          console.error('사용자 데이터가 존재하지 않습니다.')
-          router.push('/login')  // 데이터가 없다면 로그인 페이지로 리디렉션
+          console.error('사용자 데이터가 존재하지 않습니다. username:', storedUsername);
+          // 데이터가 없는 경우, 로그아웃 처리 후 로그인 페이지로 이동
+          handleLogout(); // 로그아웃 함수 호출 (아래 정의된 함수)
+          // handleLogout에서 리디렉션하므로 여기서 추가 리디렉션 필요 없음
+          // setLoading(false)는 handleLogout 호출 전 또는 finally 블록에서 처리됨
         }
       } catch (err) {
-        console.error('사용자 데이터 로드 오류:', err)
-        router.push('/login')  // 오류 발생 시 로그인 페이지로 리디렉션
+        console.error('사용자 데이터 로드 오류:', err);
+        // 오류 발생 시 로그아웃 처리 후 로그인 페이지로 이동
+        handleLogout(); // 로그아웃 함수 호출
+      } finally {
+         setLoading(false); // 데이터 로드 시도 후 로딩 종료
       }
-      setLoading(false)
-    }
+      // --- 최종 사용자 데이터 로드 끝 ---
+    };
 
-    getUserData()
-  }, [router])
+    initializeDashboard();
+  }, [router]); // router만 의존성 배열에 포함
 
-  // 로그아웃 처리
+  // 로그아웃 처리 (기존 함수 유지 또는 개선)
   const handleLogout = () => {
-    localStorage.removeItem('username')
-    localStorage.removeItem('password')
-    localStorage.removeItem('uid')
-    localStorage.removeItem('email')
-    router.push('/login')  // 로그아웃 후 로그인 페이지로 리디렉션
-  }
+    console.log('로그아웃 처리 시작...');
+    // 로컬 스토리지 정리 (signOut 함수와 유사하게 필요한 항목 모두 제거)
+    localStorage.removeItem('username');
+    localStorage.removeItem('uid'); // 혹시 남아있을 수 있으니 제거
+    localStorage.removeItem('gender');
+    localStorage.removeItem('height');
+    localStorage.removeItem('weight');
+    localStorage.removeItem('birthDate');
+    localStorage.removeItem('name');
+    localStorage.removeItem('email');
+    localStorage.removeItem('healthGoals');
+    localStorage.removeItem('signupStep');
+    localStorage.removeItem('cart_items');
+    localStorage.removeItem('tempId'); // 여기서도 확실히 제거
+    localStorage.removeItem('last_active_time');
+    localStorage.removeItem('email_verified');
+
+    router.push('/login');
+    console.log('로그아웃 처리 완료. 로그인 페이지로 이동.');
+  };
 
   // 구독 상태 및 만료일 처리
   const getSubscriptionStatus = () => {

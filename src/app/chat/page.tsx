@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   doc, getDoc, updateDoc, increment,
-  collection, addDoc, serverTimestamp, query, orderBy, getDocs, deleteDoc, where
+  collection, addDoc, serverTimestamp, query, orderBy, getDocs, deleteDoc, where, writeBatch
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { extractKeywords, updateMindmapKeywords } from "@/lib/mindmapUtils";
@@ -19,6 +19,8 @@ type Message = { sender: "user" | "gpt"; content: string; timestamp?: string };
 type DosageSchedule = {
   time: "아침" | "점심" | "저녁" | "취침전";
   amount: number;
+  withMeal?: boolean;
+  reason?: string;
 };
 
 type Recommendation = {
@@ -40,40 +42,22 @@ const SHIPPING_COST = 4500;
 const SURVEY_DISCOUNT = 10000;
 const FIRST_SUBSIDY = 10000;
 
+// 현재 데이터베이스 구조에 맞게 타입 수정
 interface UserInfo {
   username?: string;
   gender: string;
   height: number;
   weight: number;
-  leftVision: number;
-  rightVision: number;
-  exerciseFrequency: string;
-  dietType: string;
-  sleepQuality: string;
-  healthGoal: string;
-  allergies: string;
-  supplements: string;
-  medicalHistory: string;
-  birthYear: string;
-  birthMonth: string;
-  birthDay: string;
+  name?: string;
+  birthDate: string;
 }
 
 type Profile = {
   name?: string;
-  birthYear: string;
-  birthMonth: string;
-  birthDay: string;
   gender: string;
   height: number;
   weight: number;
-  visionLeft: number;
-  visionRight: number;
-  exerciseFrequency: string;
-  dietType: string;
-  sleepQuality: string;
-  healthGoal: string;
-  allergies: string;
+  birthDate: string;
 };
 
 type SubscriptionPrices = {
@@ -94,6 +78,8 @@ interface RecommendedProduct {
   dosageSchedule: {
     time: "아침" | "점심" | "저녁" | "취침전";
     amount: number;
+    withMeal?: boolean;
+    reason?: string;
   }[];
   benefits: string[];
   precautions: string[];
@@ -135,16 +121,18 @@ function ChatContent({
   setShowDeleteConfirmModal
 }: {
   showDeleteConfirmModal: boolean;
-  setShowDeleteConfirmModal: (show: boolean) => void;
+  setShowDeleteConfirmModal: React.Dispatch<React.SetStateAction<boolean>>;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const nameParam = searchParams.get("name") || "사용자";
   const storedUsername = useRef<string | null>(null);
-
-  const [input, setInput] = useState<string>("");
+  const [storedUid, setStoredUid] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [inputMessage, setInputMessage] = useState("");
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [profileLoaded, setProfileLoaded] = useState(false);
+  const [profileMessageDisplayed, setProfileMessageDisplayed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [recommendations, setRecommendations] = useState<Recommendation[]>(() => {
     if (typeof window !== 'undefined') {
@@ -167,6 +155,27 @@ function ChatContent({
   }, []);
 
   useEffect(() => {
+    if (profileLoaded && storedUid && profile && !profileMessageDisplayed) {
+      const shouldShowProfile = messages.length === 0 || 
+        (messages.length > 0 && !messages[messages.length - 1].content.includes("현재 등록된 건강정보를 확인해주시겠어요?"));
+
+      if (shouldShowProfile) {
+        const showProfile = async () => {
+          try {
+            await showProfileMessage(storedUid);
+          } catch (error) {
+            console.error("프로필 메시지 표시 중 오류:", error);
+          }
+        };
+        showProfile();
+      }
+    }
+  }, [profileLoaded, storedUid, profile, profileMessageDisplayed]);
+
+  useEffect(() => {
+    setStoredUid(null);
+    setProfileLoaded(false);
+    
     if (!storedUsername.current) {
       router.push("/login");
       return;
@@ -174,34 +183,55 @@ function ChatContent({
 
     const fetchProfileAndChatLogs = async () => {
       try {
-        const docRef = doc(db, "users", storedUsername.current!);
-        const docSnap = await getDoc(docRef);
-
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          const profileData: Profile = {
-            name: data.name,
-            birthYear: data.birthYear || '',
-            birthMonth: data.birthMonth || '',
-            birthDay: data.birthDay || '',
-            gender: data.gender || '',
-            height: Number(data.height) || 0,
-            weight: Number(data.weight) || 0,
-            visionLeft: Number(data.visionLeft) || 0,
-            visionRight: Number(data.visionRight) || 0,
-            exerciseFrequency: data.exerciseFrequency || '',
-            dietType: data.dietType || '',
-            sleepQuality: data.sleepQuality || '',
-            healthGoal: data.healthGoal || '',
-            allergies: data.allergies || ''
-          };
-          setProfile(profileData);
+        const usersRef = collection(db, "users");
+        const q = query(usersRef, where("username", "==", storedUsername.current));
+        const querySnapshot = await getDocs(q);
+        
+        if (querySnapshot.empty) {
+          console.log('username으로 사용자를 찾을 수 없습니다:', storedUsername.current);
+          return;
         }
+        
+        const userDoc = querySnapshot.docs[0];
+        const userData = userDoc.data();
+        const uid = userDoc.id;
+        
+        setStoredUid(uid);
+        localStorage.setItem('uid', uid);
+        console.log('사용자를 찾았습니다. UID:', uid);
+        
+        const profileData: Profile = {
+          name: userData.name || localStorage.getItem("name") || '',
+          gender: userData.gender || localStorage.getItem("gender") || 'male',
+          height: Number(userData.height) || Number(localStorage.getItem("height")) || 170,
+          weight: Number(userData.weight) || Number(localStorage.getItem("weight")) || 70,
+          birthDate: userData.birthDate || localStorage.getItem("birthDate") || '2000-01-01',
+        };
+        setProfile(profileData);
 
-        // 채팅 기록 로드
-        const chatRef = collection(db, "users", storedUsername.current!, "chatLogs");
-        const q = query(chatRef, orderBy("timestamp", "asc"));
-        const querySnap = await getDocs(q);
+        const userKeys = Object.keys(userData);
+        console.log('Firestore에서 가져온 사용자 데이터 필드:', userKeys.join(', '));
+        
+        for (const key of userKeys) {
+          if (userData[key] !== null && userData[key] !== undefined) {
+            const value = typeof userData[key] === 'object' 
+              ? JSON.stringify(userData[key]) 
+              : userData[key].toString();
+            localStorage.setItem(key, value);
+          }
+        }
+        
+        if (userData.gender) localStorage.setItem('gender', userData.gender);
+        if (userData.height) localStorage.setItem('height', userData.height.toString());
+        if (userData.weight) localStorage.setItem('weight', userData.weight.toString());
+        if (userData.birthDate) localStorage.setItem('birthDate', userData.birthDate);
+        if (userData.name) localStorage.setItem('name', userData.name);
+        
+        console.log('Firestore에서 가져온 모든 사용자 정보 로컬 스토리지에 저장됨');
+
+        const chatRef = collection(db, "users", uid, "chatLogs");
+        const chatQuery = query(chatRef, orderBy("timestamp", "asc"));
+        const querySnap = await getDocs(chatQuery);
 
         const loadedMessages: ChatMessage[] = [];
         querySnap.forEach((doc) => {
@@ -214,32 +244,32 @@ function ChatContent({
         });
 
         setMessages(loadedMessages);
-
-        // 채팅 기록이 없거나 마지막 메시지가 프로필 확인 메시지가 아닌 경우에만 프로필 메시지 표시
-        const shouldShowProfile = loadedMessages.length === 0 || 
-          !loadedMessages[loadedMessages.length - 1].content.includes("현재 등록된 건강정보를 확인해주시겠어요?");
-
-        if (shouldShowProfile) {
-          await showProfileMessage();
-        }
+        
+        setProfileLoaded(true);
       } catch (err) {
         console.error("프로필 또는 채팅 불러오기 실패:", err);
       }
     };
 
     fetchProfileAndChatLogs();
-  }, [router, nameParam]);
+  }, [router]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
   const addMessage = (role: 'user' | 'assistant', content: string) => {
-    const newMessage: ChatMessage = {
-      role,
-      content,
-    };
-    setMessages((prev) => [...prev, newMessage]);
+    try {
+      setMessages((prevMessages) => [
+        ...prevMessages,
+        {
+          role,
+          content,
+        },
+      ]);
+    } catch (error) {
+      console.error("메시지 추가 중 오류:", error);
+    }
   };
 
   const calculateSubscriptionPrice = (product: Product, dailyDosage: number) => {
@@ -251,91 +281,112 @@ function ChatContent({
     };
   };
 
-  // 구독한 제품 목록 가져오기
   useEffect(() => {
     const fetchSubscribedProducts = async () => {
-      if (!storedUsername.current) return;
+      if (!storedUid) return;
       
-      const subRef = collection(db, "users", storedUsername.current, "subscriptions");
-      const q = query(subRef, where("status", "==", "active"));
-      const querySnapshot = await getDocs(q);
-      
-      const products: string[] = [];
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        if (data.supplement?.productName) {
-          products.push(data.supplement.productName);
-        }
-      });
-      
-      setSubscribedProducts(products);
+      try {
+        const subRef = collection(db, "users", storedUid, "subscriptions");
+        const q = query(subRef, where("status", "==", "active"));
+        const querySnapshot = await getDocs(q);
+        
+        const products: string[] = [];
+        querySnapshot.forEach((doc) => {
+          const data = doc.data();
+          if (data.supplement?.productName) {
+            products.push(data.supplement.productName);
+          }
+        });
+        
+        setSubscribedProducts(products);
+      } catch (error) {
+        console.error("구독 제품 목록 가져오기 실패:", error);
+      }
     };
 
-    fetchSubscribedProducts();
-  }, [storedUsername.current]);
+    if (storedUid) {
+      fetchSubscribedProducts();
+    }
+  }, [storedUid]);
 
   const extractRecommendations = async (reply: string): Promise<RecommendedProduct[]> => {
     const recommendations: RecommendedProduct[] = [];
     
     try {
-      // '[추천]' 또는 '[영양제 추천]' 마커 찾기
+      // 1. 텍스트에서 마커를 찾아서 추천 영양제 파싱 (기존 방식)
       const markers = ['[추천]', '[영양제 추천]'];
       let recString = '';
       
       for (const marker of markers) {
         if (reply.includes(marker)) {
           const parts = reply.split(marker);
-          if (parts.length >= 2) {
-            recString = parts[1].trim();
-            break;
+          for (let i = 1; i < parts.length; i++) {
+            recString += parts[i].trim() + '\n';
           }
         }
       }
 
-      if (!recString) {
-        return recommendations;
+      if (recString) {
+        const lines = recString.split('\n').map(l => l.trim()).filter(Boolean);
+        const recLines = lines.filter(line => 
+          line.startsWith('-') || 
+          line.startsWith('•') || 
+          line.includes(':')
+        );
+
+        for (const line of recLines) {
+          const content = line.replace(/^[-•]\s*/, '').trim();
+          
+          let name = '', dosage = 1;
+          
+          if (content.includes(':')) {
+            [name, dosage] = extractNameAndDosage(content.split(':'));
+          } else if (content.includes('알')) {
+            [name, dosage] = extractNameAndDosage(content.split(/\s+(?=\d+알)/));
+          } else {
+            name = content.split(/\s+/)[0];
+          }
+
+          name = name.trim();
+          
+          const product = products.find(p => p.name === name);
+          if (product && !subscribedProducts.includes(name)) {
+            const normalizedGender = (() => {
+              const gender = userInfo?.gender?.toLowerCase() || 'male';
+              if (gender === 'male' || gender === '남' || gender === '남성' || gender === '남자') {
+                return 'male';
+              } else if (gender === 'female' || gender === '여' || gender === '여성' || gender === '여자') {
+                return 'female';
+              }
+              return gender;
+            })();
+            
+            recommendations.push({
+              id: `${Date.now()}-${Math.random()}`,
+              name: name,
+              description: product.description,
+              category: product.category,
+              pricePerUnit: product.pricePerUnit,
+              tags: product.tags,
+              reason: `AI가 추천하는 맞춤 영양제입니다.`,
+              dailyDosage: dosage,
+              dosageSchedule: calculateDosageSchedule(name, dosage, {
+                gender: normalizedGender,
+                height: userInfo?.height || 170,
+                weight: userInfo?.weight || 70,
+                birthDate: userInfo?.birthDate || '',
+                name: userInfo?.name || '',
+                username: userInfo?.username || ''
+              }),
+              benefits: [],
+              precautions: [],
+              monthlyPrice: calculateSubscriptionPrice(product, dosage).monthly
+            });
+          }
+        }
       }
 
-      const lines = recString.split('\n').map(l => l.trim());
-      const recLines = lines.filter(line => line.startsWith('-') || line.startsWith('•'));
-
-      for (const line of recLines) {
-        const content = line.replace(/^[-•]\s*/, '').trim();
-        
-        // 영양제 이름과 복용량 추출
-        let name = '', dosage = 1;
-        
-        if (content.includes(':')) {
-          [name, dosage] = extractNameAndDosage(content.split(':'));
-        } else if (content.includes('알')) {
-          [name, dosage] = extractNameAndDosage(content.split(/\s+(?=\d+알)/));
-        } else {
-          name = content.split(/\s+/)[0];
-        }
-
-        name = name.trim();
-        
-        // products 배열에서 해당 제품 찾기
-        const product = products.find(p => p.name === name);
-        if (product && !subscribedProducts.includes(name)) {
-          recommendations.push({
-            id: `${Date.now()}-${Math.random()}`,
-            name: name,
-            description: product.description,
-            category: product.category,
-            pricePerUnit: product.pricePerUnit,
-            tags: product.tags,
-            reason: `AI가 추천하는 맞춤 영양제입니다.`,
-            dailyDosage: dosage,
-            dosageSchedule: calculateDosageSchedule(name, dosage, userInfo!),
-            benefits: [],
-            precautions: [],
-            monthlyPrice: calculateSubscriptionPrice(product, dosage).monthly
-          });
-        }
-      }
-
-      console.log('추출된 추천 영양제:', recommendations); // 디버깅용 로그
+      console.log('텍스트에서 추출된 추천 영양제:', recommendations);
     } catch (error) {
       console.error('추천 영양제 추출 중 오류:', error);
     }
@@ -343,7 +394,6 @@ function ChatContent({
     return recommendations;
   };
 
-  // 영양제 이름과 복용량을 추출하는 헬퍼 함수
   const extractNameAndDosage = (parts: string[]): [string, number] => {
     if (!parts || parts.length < 1) return ['', 1];
     
@@ -360,12 +410,10 @@ function ChatContent({
     return [name, dosage];
   };
 
-  // 추천 영양제 삭제 함수
   const handleRemoveRecommendation = (productName: string) => {
     setRecommendations(prev => prev.filter(rec => rec.productName !== productName));
   };
 
-  // 전체 구독하기 함수
   const handleSubscribeAll = () => {
     if (recommendations.length > 0) {
       sessionStorage.setItem('nutri_recommendations', JSON.stringify(recommendations));
@@ -373,99 +421,21 @@ function ChatContent({
     }
   };
 
-  // 프로필 메시지 표시 함수
-  const showProfileMessage = async () => {
-    if (!profile) return;
-
-    const profileMsg = `
-안녕하세요 ${profile.name || nameParam}님! 😊
-현재 등록된 건강정보를 확인해주시겠어요?
-
-- 생년월일: ${profile.birthYear}-${profile.birthMonth}-${profile.birthDay}
-- 성별: ${profile.gender}
-- 키: ${profile.height}cm
-- 몸무게: ${profile.weight}kg
-- 시력 (좌: ${profile.visionLeft} / 우: ${profile.visionRight})
-- 운동 빈도: ${profile.exerciseFrequency}
-- 식습관: ${profile.dietType}
-- 수면의 질: ${profile.sleepQuality}
-- 건강 목표: ${profile.healthGoal}
-- 알레르기 정보: ${profile.allergies}
-
-위 정보가 맞다면 채팅창에 "맞아"라고 입력해주세요.
-회원정보 수정이 필요하시다면 "마이페이지"에서 수정 후 다시 돌아와 주세요.`.trim();
-
-    addMessage("assistant", profileMsg);
-    await addDoc(collection(db, "users", storedUsername.current!, "chatLogs"), {
-      role: "assistant",
-      content: profileMsg,
-      timestamp: serverTimestamp(),
-    });
-  };
-
-  // 채팅 기록 삭제 후 프로필 메시지 표시
-  const handleDeleteAllMessages = async () => {
-    setShowDeleteConfirmModal(true);
-  };
-
-  const confirmDelete = async () => {
-    const username = storedUsername.current;
-    if (!username) {
-      alert("사용자 정보를 찾을 수 없습니다.");
-      return;
-    }
-
-    setIsDeleting(true); // 삭제 시작 시 로딩 상태 활성화
-
-    try {
-      const chatRef = collection(db, "users", username, "chatLogs");
-      const q = query(chatRef);
-      const snap = await getDocs(q);
-
-      for (const docSnap of snap.docs) {
-        await deleteDoc(docSnap.ref);
-      }
-
-      setMessages([]);
-      setRecommendations([]);
-      localStorage.removeItem('chatRecommendations');
-
-      await showProfileMessage();
-    } catch (err) {
-      console.error("삭제 실패:", err);
-      alert("삭제 중 오류가 발생했습니다.");
-    } finally {
-      setIsDeleting(false); // 삭제 완료 후 로딩 상태 비활성화
-      setShowDeleteConfirmModal(false);
-    }
-  };
-
-  // 사용자 정보 가져오기
   useEffect(() => {
     const fetchUserInfo = async () => {
-      if (!storedUsername.current) return;
+      if (!storedUid) return;
       
       try {
-        const userDoc = await getDoc(doc(db, 'users', storedUsername.current));
+        const userDoc = await getDoc(doc(db, 'users', storedUid));
         if (userDoc.exists()) {
           const userData = userDoc.data();
           const userInfo: UserInfo = {
-            username: storedUsername.current,
-            gender: userData.gender || '남',
-            height: Number(userData.height) || 170,
-            weight: Number(userData.weight) || 70,
-            leftVision: Number(userData.leftVision) || 1.0,
-            rightVision: Number(userData.rightVision) || 1.0,
-            exerciseFrequency: userData.exerciseFrequency || '주 3-4회',
-            dietType: userData.dietType || '일반',
-            sleepQuality: userData.sleepQuality || '보통',
-            healthGoal: userData.healthGoal || '건강 유지',
-            allergies: userData.allergies || '',
-            supplements: userData.supplements || '',
-            medicalHistory: userData.medicalHistory || '',
-            birthYear: userData.birthYear || '1990',
-            birthMonth: userData.birthMonth || '01',
-            birthDay: userData.birthDay || '01'
+            username: storedUsername.current || '',
+            name: userData.name || localStorage.getItem("name") || '',
+            gender: userData.gender || localStorage.getItem("gender") || 'male',
+            height: Number(userData.height) || Number(localStorage.getItem("height")) || 170,
+            weight: Number(userData.weight) || Number(localStorage.getItem("weight")) || 70,
+            birthDate: userData.birthDate || localStorage.getItem("birthDate") || '2000-01-01',
           };
           setUserInfo(userInfo);
         }
@@ -474,29 +444,151 @@ function ChatContent({
       }
     };
 
-    fetchUserInfo();
-  }, [storedUsername.current]);
+    if (storedUid) {
+      fetchUserInfo();
+    }
+  }, [storedUid]);
+
+  const showProfileMessage = async (uid: string) => {
+    if (!profile) {
+      console.error("프로필 정보가 없어 프로필 메시지를 표시할 수 없습니다.");
+      return;
+    }
+
+    if (profileMessageDisplayed) {
+      console.log("프로필 메시지가 이미 표시되어 있습니다.");
+      return;
+    }
+
+    try {
+      const genderDisplay = (gender: string) => {
+        if (!gender) return '정보 없음';
+        if (gender.toLowerCase() === 'male') return '남';
+        if (gender.toLowerCase() === 'female') return '여';
+        if (gender === '남성' || gender === '남자') return '남';
+        if (gender === '여성' || gender === '여자') return '여';
+        return gender;
+      };
+
+      const profileMsg = `
+안녕하세요 ${profile.name || localStorage.getItem("name") || "사용자"}님! 😊
+현재 등록된 건강정보를 확인해주시겠어요?
+
+- 생년월일: ${profile.birthDate || localStorage.getItem("birthDate") || ""}
+- 성별: ${genderDisplay(profile.gender || localStorage.getItem("gender") || "male")}
+- 키: ${profile.height || localStorage.getItem("height") || "170"}cm
+- 몸무게: ${profile.weight || localStorage.getItem("weight") || "70"}kg
+
+위 정보가 맞다면 채팅창에 "맞아"라고 입력해주세요.
+회원정보 수정이 필요하시다면 "마이페이지"에서 수정 후 다시 돌아와 주세요.
+${profile.name || localStorage.getItem("name") || "사용자"}님의 건강상태를 참고해서 AI가 영양제를 추천해드릴게요!! 😊`.trim();
+
+      setMessages(prevMessages => [
+        ...prevMessages,
+        {
+          role: "assistant",
+          content: profileMsg
+        }
+      ]);
+      
+      setProfileMessageDisplayed(true);
+      
+      await addDoc(collection(db, "users", uid, "chatLogs"), {
+        role: "assistant",
+        content: profileMsg,
+        timestamp: serverTimestamp(),
+      });
+    } catch (error) {
+      console.error("프로필 메시지 표시 중 오류:", error);
+    }
+  };
+
+  const deleteAllChatLogs = async () => {
+    setIsDeleting(true);
+    
+    try {
+      if (!storedUsername.current) {
+        console.error('사용자명이 없습니다.');
+        setIsDeleting(false);
+        setShowDeleteConfirmModal(false);
+        return;
+      }
+      
+      if (!storedUid) {
+        console.error('사용자 UID가 없습니다.');
+        setIsDeleting(false);
+        setShowDeleteConfirmModal(false);
+        return;
+      }
+      
+      try {
+        const chatRef = collection(db, "users", storedUid, "chatLogs");
+        const logsSnapshot = await getDocs(chatRef);
+        
+        const batch = writeBatch(db);
+        logsSnapshot.forEach((doc) => {
+          batch.delete(doc.ref);
+        });
+        
+        await batch.commit();
+        
+        setMessages([]);
+        setRecommendations([]);
+        localStorage.removeItem('chatRecommendations');
+        
+        setProfileMessageDisplayed(false);
+        
+        if (profile && storedUid) {
+          try {
+            await showProfileMessage(storedUid);
+          } catch (error) {
+            console.error("채팅 기록 삭제 후 프로필 메시지 표시 중 오류:", error);
+          }
+        }
+      } catch (error) {
+        console.error("채팅 로그 삭제 중 오류:", error);
+        throw error;
+      }
+      
+      setShowDeleteConfirmModal(false);
+    } catch (err) {
+      console.error("삭제 실패:", err);
+      
+      toast.error('채팅 내역 삭제 중 오류가 발생했습니다.', {
+        duration: 3000,
+        position: 'bottom-center'
+      });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim()) return;
+    if (!inputMessage.trim() || !storedUid) return;
 
-    setLoading(true);
-
-    // 사용자 메시지 추가
-    const userMessage: ChatMessage = {
+    const userMessage = inputMessage.trim();
+    setInputMessage("");
+    
+    setMessages(prev => [...prev, {
       role: 'user',
-      content: input
-    };
-    setMessages(prev => [...prev, userMessage]);
-    setInput('');
+      content: userMessage
+    }]);
 
     try {
-      // 최근 5개 메시지만 전송하여 컨텍스트 크기 줄임
-      const recentMessages = messages.slice(-5).map(msg => ({
-        role: msg.role,
-        content: msg.content
-      }));
+      await addDoc(collection(db, "users", storedUid, "chatLogs"), {
+        role: "user",
+        content: userMessage,
+        timestamp: serverTimestamp(),
+      });
+
+      setLoading(true);
+
+      const userDocRef = doc(db, "users", storedUid);
+      await updateDoc(userDocRef, {
+        messagesSent: increment(1),
+        lastActive: serverTimestamp(),
+      });
 
       const response = await fetch("/api/chat", {
         method: "POST",
@@ -504,10 +596,13 @@ function ChatContent({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          message: input,
+          message: userMessage,
           userInfo: userInfo,
           username: storedUsername.current,
-          conversation: recentMessages
+          conversation: messages.slice(-10).map(msg => ({
+            role: msg.role,
+            content: msg.content
+          }))
         }),
       });
 
@@ -517,111 +612,147 @@ function ChatContent({
 
       const data = await response.json();
       
-      // AI 응답 메시지 추가 (비동기 처리 최적화)
-      const recommendations = await extractRecommendations(data.reply);
-      
-      const aiResponse: ChatMessage = {
-        role: 'assistant',
-        content: data.reply,
-        recommendations: recommendations,
-        foodRecommendations: data.foodRecommendations || [],
-        exerciseRoutines: data.exerciseRoutines || []
-      };
+      try {
+        // API 응답에서 추천 정보 직접 사용 (새로운 방식)
+        let apiRecommendations: RecommendedProduct[] = [];
+        
+        if (data.recommendations && Array.isArray(data.recommendations) && data.recommendations.length > 0) {
+          // API에서 제공된 recommendations 사용
+          apiRecommendations = data.recommendations.map((rec: any) => {
+            const product = products.find(p => p.name === rec.name);
+            if (!product) return null;
+            
+            return {
+              id: `${Date.now()}-${Math.random()}`,
+              name: rec.name,
+              description: product.description,
+              category: rec.category || product.category,
+              pricePerUnit: product.pricePerUnit,
+              tags: product.tags,
+              reason: rec.reason || "AI가 추천하는 맞춤 영양제입니다.",
+              dailyDosage: rec.dosage || 1,
+              dosageSchedule: rec.schedule || calculateDosageSchedule(rec.name, rec.dosage || 1, userInfo || {
+                gender: 'male',
+                height: 170,
+                weight: 70,
+                birthDate: '2000-01-01',
+                name: '',
+                username: ''
+              }),
+              benefits: rec.benefits || [],
+              precautions: rec.precautions || [],
+              monthlyPrice: product.pricePerUnit * (rec.dosage || 1) * 30
+            };
+          }).filter(Boolean);
+        }
+        
+        // 텍스트에서 추천 정보 추출 (기존 방식 백업)
+        const extractedRecommendations = await extractRecommendations(data.reply);
+        
+        // 두 방식 모두 사용하고 중복 제거
+        const combinedRecommendations = [...apiRecommendations];
+        
+        // 중복된 이름이 없는 경우에만 추가
+        extractedRecommendations.forEach(rec => {
+          if (!combinedRecommendations.some(r => r.name === rec.name)) {
+            combinedRecommendations.push(rec);
+          }
+        });
+        
+        console.log('최종 추천 영양제:', combinedRecommendations);
+        
+        // 메시지에 추천 정보 포함하여 저장
+        setMessages(prevMessages => [
+          ...prevMessages, 
+          {
+            role: 'assistant',
+            content: data.reply,
+            ...(combinedRecommendations.length > 0 ? { recommendations: combinedRecommendations } : {}),
+            foodRecommendations: data.foodRecommendations || [],
+            exerciseRoutines: data.exerciseRoutines || []
+          }
+        ]);
 
-      setMessages(prev => [...prev, aiResponse]);
-
-      // Firebase 저장 비동기 처리
-      if (storedUsername.current) {
-        addDoc(collection(db, "users", storedUsername.current, "chatLogs"), {
+        await addDoc(collection(db, "users", storedUid, "chatLogs"), {
           role: "assistant",
           content: data.reply,
-          recommendations: recommendations,
-          foodRecommendations: data.foodRecommendations || [],
-          exerciseRoutines: data.exerciseRoutines || [],
+          ...(combinedRecommendations.length > 0 ? { recommendations: combinedRecommendations } : {}),
           timestamp: serverTimestamp(),
-        }).catch(dbError => {
-          console.error('채팅 로그 저장 실패:', dbError);
+        });
+      } catch (processError) {
+        console.error("응답 처리 중 오류:", processError);
+        
+        setMessages(prevMessages => [
+          ...prevMessages, 
+          {
+            role: 'assistant',
+            content: data.reply
+          }
+        ]);
+        
+        await addDoc(collection(db, "users", storedUid, "chatLogs"), {
+          role: "assistant",
+          content: data.reply,
+          timestamp: serverTimestamp(),
         });
       }
 
     } catch (error) {
-      console.error('메시지 전송 중 오류:', error);
-      const errorMessage = error instanceof Error ? error.message : '죄송합니다. 오류가 발생했습니다. 다시 시도해주세요.';
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: errorMessage
-      }]);
+      console.error("오류 발생:", error);
+      
+      setMessages(prevMessages => [
+        ...prevMessages,
+        {
+          role: "assistant",
+          content: "죄송합니다. 요청을 처리하는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+        }
+      ]);
     } finally {
       setLoading(false);
     }
   };
 
   const handleSupplementClick = (supplement: RecommendedProduct) => {
-    // 전역 장바구니에서 중복 체크
-    const checkDuplicateEvent = new CustomEvent('checkHealthSubscription', {
-      detail: {
-        name: supplement.name
-      }
-    });
-
-    // 중복 체크 이벤트 발생 및 응답 처리
+    setSelectedSupplement(supplement);
+    
+    // 구독함에 추가하기 위한 이벤트 발생
     const checkDuplicate = () => {
       return new Promise<boolean>((resolve) => {
         const handleResponse = (e: CustomEvent) => {
-          resolve(e.detail.isDuplicate);
+          const { isDuplicate } = e.detail;
           window.removeEventListener('healthSubscriptionResponse', handleResponse as EventListener);
+          resolve(isDuplicate);
         };
         
         window.addEventListener('healthSubscriptionResponse', handleResponse as EventListener);
-        window.dispatchEvent(checkDuplicateEvent);
+        
+        window.dispatchEvent(new CustomEvent('checkHealthSubscription', {
+          detail: { name: supplement.name }
+        }));
       });
     };
-
-    // 중복 체크 후 처리
-    checkDuplicate().then((isDuplicate) => {
+    
+    checkDuplicate().then(isDuplicate => {
       if (isDuplicate) {
-        toast.error('이미 건강구독함에 추가된 제품입니다.', {
-          duration: 3000,
-          position: 'bottom-center',
-          style: {
-            background: '#EF4444',
-            color: '#fff',
-            fontSize: '16px',
-            padding: '16px'
+        toast.error(`${supplement.name}은(는) 이미 건강구독함에 있습니다.`);
+      } else {
+        // 채팅 추천 제품을 건강구독함에 추가하는 이벤트 발생 (ClientLayout과 호환되는 형식)
+        // dosageSchedule이 모든 필요한 필드를 포함하는지 확인
+        const validDosageSchedule = supplement.dosageSchedule.map(schedule => ({
+          ...schedule,
+          withMeal: schedule.withMeal !== undefined ? schedule.withMeal : true,
+          reason: schedule.reason || "영양제 복용 권장 사항입니다."
+        }));
+        
+        window.dispatchEvent(new CustomEvent('chatRecommendation', { 
+          detail: {
+            ...supplement,
+            dosageSchedule: validDosageSchedule
           }
-        });
-        return;
+        }));
+        
+        toast.success(`${supplement.name}이(가) 건강구독함에 추가되었습니다.`);
       }
-
-      // 중복이 아닌 경우에만 장바구니에 추가
-      const addToCartEvent = new CustomEvent('addToHealthSubscription', {
-        detail: {
-          id: supplement.id,
-          name: supplement.name,
-          description: supplement.description,
-          category: supplement.category,
-          pricePerUnit: supplement.pricePerUnit,
-          tags: supplement.tags,
-          dailyDosage: supplement.dailyDosage,
-          dosageSchedule: supplement.dosageSchedule,
-          monthlyPrice: supplement.monthlyPrice
-        }
-      });
-      window.dispatchEvent(addToCartEvent);
-
-      toast.success('건강구독함에 추가되었습니다!', {
-        duration: 3000,
-        position: 'bottom-center',
-        style: {
-          background: '#4CAF50',
-          color: '#fff',
-          fontSize: '16px',
-          padding: '16px'
-        }
-      });
-
-      // 로컬 상태 업데이트
-      setSubscribedProducts(prev => [...prev, supplement.name]);
     });
   };
 
@@ -642,14 +773,12 @@ function ChatContent({
     router.push('/payment');
   };
 
-  // recommendations가 변경될 때마다 로컬 스토리지에 저장
   useEffect(() => {
     if (recommendations.length > 0) {
       sessionStorage.setItem('nutri_recommendations', JSON.stringify(recommendations));
     }
   }, [recommendations]);
 
-  // 페이지 로드 시 기존 추천 데이터 불러오기
   useEffect(() => {
     const stored = sessionStorage.getItem('nutri_recommendations');
     if (stored) {
@@ -666,7 +795,6 @@ function ChatContent({
     setIsSidebarOpen(!isSidebarOpen);
   };
 
-  // calculateDosageSchedule 함수 추가
   const calculateDosageSchedule = (
     supplementName: string,
     dailyDosage: number,
@@ -678,43 +806,119 @@ function ChatContent({
       case '오메가3':
       case '트리플러스 우먼':
       case '트리플러스 맨':
-        // 하루 2알 이상은 나누어 복용
         if (dailyDosage >= 2) {
-          schedule.push({ time: "아침", amount: Math.ceil(dailyDosage / 2) });
-          schedule.push({ time: "저녁", amount: Math.floor(dailyDosage / 2) });
+          schedule.push({ 
+            time: "아침", 
+            amount: Math.ceil(dailyDosage / 2),
+            withMeal: true,  // 식사와 함께 복용
+            reason: "오메가3는 지용성 영양소로 식사 중 지방과 함께 섭취하면 흡수율이 높아집니다."
+          });
+          schedule.push({ 
+            time: "저녁", 
+            amount: Math.floor(dailyDosage / 2),
+            withMeal: true,
+            reason: "하루에 나누어 복용하면 체내 농도를 일정하게 유지할 수 있습니다."
+          });
         } else {
-          schedule.push({ time: "아침", amount: dailyDosage });
+          schedule.push({ 
+            time: "아침", 
+            amount: dailyDosage,
+            withMeal: true,
+            reason: "오메가3는 지용성 영양소로 식사 중 지방과 함께 섭취하면 흡수율이 높아집니다."
+          });
         }
         break;
         
       case '마그네슘':
-        // 수면 개선을 위해 저녁이나 취침 전 복용
-        schedule.push({ time: "취침전", amount: dailyDosage });
+        schedule.push({ 
+          time: "취침전", 
+          amount: dailyDosage,
+          withMeal: false,
+          reason: "마그네슘은 수면에 도움을 주므로 취침 전 복용이 효과적입니다."
+        });
         break;
         
       case '비타민C':
+        schedule.push({ 
+          time: "아침", 
+          amount: dailyDosage,
+          withMeal: false,
+          reason: "비타민C는 수용성 비타민으로 공복에 복용하면 빠르게 흡수됩니다."
+        });
+        break;
+        
       case '비타민D':
-        // 아침에 복용
-        schedule.push({ time: "아침", amount: dailyDosage });
+        schedule.push({ 
+          time: "아침", 
+          amount: dailyDosage,
+          withMeal: true,
+          reason: "비타민D는 지용성 비타민으로 식사와 함께 복용 시 흡수가 잘 됩니다."
+        });
         break;
         
       case '아르기닌':
-        // 운동 전후 복용을 위해 분할
         if (dailyDosage >= 2) {
-          schedule.push({ time: "아침", amount: Math.ceil(dailyDosage / 2) });
-          schedule.push({ time: "저녁", amount: Math.floor(dailyDosage / 2) });
+          schedule.push({ 
+            time: "아침", 
+            amount: Math.ceil(dailyDosage / 2),
+            withMeal: false,
+            reason: "아르기닌은 일반적으로 공복에 섭취할 때 효과가 좋습니다."
+          });
+          schedule.push({ 
+            time: "저녁", 
+            amount: Math.floor(dailyDosage / 2),
+            withMeal: false,
+            reason: "취침 전 섭취하면 성장호르몬 분비 촉진에 도움이 됩니다."
+          });
         } else {
-          schedule.push({ time: "아침", amount: dailyDosage });
+          schedule.push({ 
+            time: "아침", 
+            amount: dailyDosage,
+            withMeal: false,
+            reason: "아르기닌은 일반적으로 공복에 섭취할 때 효과가 좋습니다."
+          });
         }
         break;
         
+      case '프로바이오틱스':
+        schedule.push({ 
+          time: "아침", 
+          amount: dailyDosage,
+          withMeal: false,
+          reason: "프로바이오틱스는 위산이 적은 식전 공복 상태에서 더 많은 유산균이 장까지 도달할 수 있습니다."
+        });
+        break;
+        
+      case '루테인':
+        schedule.push({ 
+          time: "점심", 
+          amount: dailyDosage,
+          withMeal: true, 
+          reason: "루테인은 지용성 성분으로 식사와 함께 복용하면 흡수가 잘 됩니다."
+        });
+        break;
+          
       default:
-        // 기본적으로 아침/저녁 분할 복용
         if (dailyDosage >= 2) {
-          schedule.push({ time: "아침", amount: Math.ceil(dailyDosage / 2) });
-          schedule.push({ time: "저녁", amount: Math.floor(dailyDosage / 2) });
+          schedule.push({ 
+            time: "아침", 
+            amount: Math.ceil(dailyDosage / 2),
+            withMeal: true,
+            reason: "일반적으로 영양제는 식사와 함께 복용하면 흡수율이 높아집니다."
+          });
+          schedule.push({ 
+            time: "저녁", 
+            amount: Math.floor(dailyDosage / 2),
+            withMeal: true,
+            reason: "하루 나누어 복용하면 체내 영양소 수준을 일정하게 유지할 수 있습니다."
+          });
         } else {
-          schedule.push({ time: "아침", amount: dailyDosage });
+          schedule.push({ 
+            time: "아침", 
+            amount: dailyDosage,
+            withMeal: true,
+            reason: "일반적으로 영양제는 식사와 함께 복용하면 흡수율이 높아집니다."
+          });
         }
     }
     
@@ -894,7 +1098,6 @@ function ChatContent({
 
   return (
     <div className="relative max-w-4xl mx-auto px-4">
-      {/* 삭제 중 로딩 오버레이 */}
       {isDeleting && (
         <div className="fixed inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="text-center">
@@ -905,8 +1108,8 @@ function ChatContent({
         </div>
       )}
 
-      <div className="h-[calc(100vh-10rem)] overflow-y-auto mt-2"> {/* 높이 조정 및 상단 마진 추가 */}
-        <div className="space-y-4 pb-4"> {/* 하단 패딩 추가 */}
+      <div className="h-[calc(100vh-10rem)] overflow-y-auto mt-2">
+        <div className="space-y-4 pb-4">
           {messages.map((message, index) => (
             <div
               key={index}
@@ -940,45 +1143,42 @@ function ChatContent({
                     <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
                     <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
                   </div>
-                  <span className="text-sm text-gray-500">AI가 답변을 작성중입니다...</span>
+                  <span className="text-sm text-gray-500">AI가 사용자에게 맞는 영양제를 검색중 입니다...</span>
                 </div>
               </div>
             </div>
-            )}
-            <div ref={bottomRef} />
-          </div>
+          )}
+          <div ref={bottomRef} />
         </div>
+      </div>
 
-      {/* 입력 영역 - 하단에 고정 */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t z-40">
         <div className="max-w-4xl mx-auto">
-          {/* 워터마크 문구 수정 */}
           <div className="text-center text-gray-400 text-sm py-1">
             <p>💡 영양제 구독은 미래를 위한 <span className="font-medium">실질적인</span> 보험입니다.</p>
-        </div>
+          </div>
           <div className="px-4 py-4">
             <form onSubmit={handleSubmit} className="flex gap-2">
               <input
                 type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
+                value={inputMessage}
+                onChange={(e) => setInputMessage(e.target.value)}
                 placeholder="메시지를 입력하세요..."
                 className="flex-1 rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 disabled={loading}
-            />
-            <button
+              />
+              <button
                 type="submit"
                 disabled={loading}
                 className="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50"
               >
                 전송
-            </button>
+              </button>
             </form>
           </div>
         </div>
       </div>
 
-      {/* 삭제 확인 모달 */}
       {showDeleteConfirmModal && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl transform transition-all animate-fadeIn">
@@ -1003,7 +1203,7 @@ function ChatContent({
                 아니오
               </button>
               <button
-                onClick={confirmDelete}
+                onClick={deleteAllChatLogs}
                 disabled={isDeleting}
                 className="flex-1 px-4 py-3 text-white bg-red-500 rounded-xl hover:bg-red-600 transition-colors disabled:opacity-50"
               >
@@ -1040,7 +1240,6 @@ function ChatContent({
   );
 }
 
-// Suspense로 감싸는 실제 페이지 컴포넌트
 export default function ChatPage() {
   const router = useRouter();
   const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
@@ -1077,13 +1276,18 @@ export default function ChatPage() {
           </button>
         </div>
       </div>
-      <div className="relative pt-16 pb-24">
-        <Suspense fallback={<div>Loading...</div>}>
+      <div className="pt-16 pb-24">
+        <Suspense fallback={
+          <div className="flex flex-col items-center justify-center h-[70vh]">
+            <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+            <p className="text-gray-600 font-medium">채팅을 불러오는 중입니다...</p>
+          </div>
+        }>
           <ChatContent
             showDeleteConfirmModal={showDeleteConfirmModal}
             setShowDeleteConfirmModal={setShowDeleteConfirmModal}
           />
-    </Suspense>
+        </Suspense>
       </div>
     </div>
   );

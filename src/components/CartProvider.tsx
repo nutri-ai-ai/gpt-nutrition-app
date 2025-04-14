@@ -11,6 +11,7 @@ interface CartContextType {
   removeFromCart: (productId: string) => void;
   isCartOpen: boolean;
   setIsCartOpen: (isOpen: boolean) => void;
+  checkIsDuplicate: (productId: string) => boolean;
 }
 
 interface CartItem {
@@ -50,14 +51,30 @@ export default function CartProvider({
   useEffect(() => {
     const handleAddToCart = (event: CustomEvent<Product>) => {
       addToCart(event.detail)
-      setIsCartOpen(true) // 건강구독함에 추가할 때 자동으로 열기
+      // 자동으로 열리는 기능 제거
+      // setIsCartOpen(true) 
     }
 
-    window.addEventListener('addToHealthSubscription', handleAddToCart as EventListener)
-    return () => {
-      window.removeEventListener('addToHealthSubscription', handleAddToCart as EventListener)
+    // 중복 확인 이벤트 핸들러 추가
+    const handleCheckDuplicate = (event: CustomEvent<{name: string}>) => {
+      const isDuplicate = cartItems.some(item => item.product.name === event.detail.name);
+      
+      // 결과 반환을 위한 커스텀 이벤트 생성
+      const responseEvent = new CustomEvent('healthSubscriptionResponse', {
+        detail: { isDuplicate }
+      });
+      
+      window.dispatchEvent(responseEvent);
     }
-  }, [])
+
+    window.addEventListener('addToHealthSubscription', handleAddToCart as EventListener);
+    window.addEventListener('checkHealthSubscription', handleCheckDuplicate as EventListener);
+    
+    return () => {
+      window.removeEventListener('addToHealthSubscription', handleAddToCart as EventListener);
+      window.removeEventListener('checkHealthSubscription', handleCheckDuplicate as EventListener);
+    }
+  }, [cartItems]);
 
   const addToCart = (product: Product) => {
     setCartItems(prevItems => {
@@ -76,12 +93,26 @@ export default function CartProvider({
   const removeFromCart = (productId: string) => {
     setCartItems(prevItems => prevItems.filter(item => item.product.id !== productId))
   }
+  
+  const checkIsDuplicate = (productId: string) => {
+    return cartItems.some(item => item.product.id === productId);
+  }
 
   // 현재 경로가 제외할 페이지인지 확인
   const isExcludedPage = () => {
     if (typeof window !== 'undefined') {
       const path = window.location.pathname
-      return ['/login', '/signup', '/mypage'].includes(path)
+      // signup-v2 관련 경로 추가
+      return [
+        '/login', 
+        '/signup', 
+        '/mypage',
+        '/signup-v2',
+        '/signup-v2/email',
+        '/signup-v2/intro',
+        '/signup-v2/survey',
+        '/signup-v2/account'
+      ].some(excludedPath => path.startsWith(excludedPath))
     }
     return false
   }
@@ -92,7 +123,8 @@ export default function CartProvider({
       addToCart,
       removeFromCart,
       isCartOpen,
-      setIsCartOpen
+      setIsCartOpen,
+      checkIsDuplicate
     }}>
       {children}
       

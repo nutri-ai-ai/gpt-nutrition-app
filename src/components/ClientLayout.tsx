@@ -6,6 +6,7 @@ import Cart from './Cart'
 import { Product } from '@/lib/products'
 import { useRouter } from 'next/navigation'
 
+// 추천 제품 정보 인터페이스 개선
 interface CartItem {
   product: {
     id: string;
@@ -18,8 +19,13 @@ interface CartItem {
     dosageSchedule: {
       time: "아침" | "점심" | "저녁" | "취침전";
       amount: number;
+      withMeal?: boolean;
+      reason?: string;
     }[];
     monthlyPrice: number;
+    benefits?: string[];
+    precautions?: string[];
+    reason?: string;
   }
 }
 
@@ -33,51 +39,146 @@ export default function ClientLayout({
   const [cartItems, setCartItems] = useState<CartItem[]>([])
   const router = useRouter()
 
-  // 제외할 페이지 목록
-  const excludedPages = [
+  // 제외할 페이지 목록 (최상위 경로)
+  const excludedTopLevelPaths = [
     '/', 
-    '/login', 
+    '/login/', 
     '/signup',
-    '/signup-v2',
     '/intro'
   ]
-
+  
+  // 전체 경로가 제외되어야 하는 경로 패턴
+  const excludedPathPatterns = [
+    '/signup-v2'
+  ]
+  
   // 현재 경로가 제외 페이지에 포함되는지 확인
-  const shouldHideCart = excludedPages.some(page => pathname?.startsWith(page))
+  const shouldHideCart = (
+    // 정확히 일치하는 최상위 경로 확인
+    excludedTopLevelPaths.some(page => pathname === page) || 
+    // 경로 패턴으로 시작하는 모든 페이지 확인
+    excludedPathPatterns.some(pattern => pathname?.startsWith(pattern))
+  )
+  
+  // 디버깅용 코드
+  useEffect(() => {
+    console.log('[ClientLayout] 현재 경로:', pathname);
+    console.log('[ClientLayout] 건강구독함 표시 여부:', !shouldHideCart);
+  }, [pathname, shouldHideCart]);
 
   // 장바구니 이벤트 리스너
   useEffect(() => {
     const handleAddToCart = (event: CustomEvent) => {
       const product = event.detail;
+      
+      // 콘솔에 수신된 제품 정보 출력 (디버깅용)
+      console.log("건강구독함에 추가된 제품:", product);
+      
       setCartItems(prev => {
+        // 같은 이름의 제품이 이미 있는지 확인
         const existingItem = prev.find(item => item.product.name === product.name);
         if (existingItem) {
           return prev;
         }
-        return [...prev, { product }];
+        const newItems = [...prev, { product }];
+        
+        // 글로벌 객체에 건강구독함 데이터 저장 (구독 페이지와 공유)
+        if (typeof window !== 'undefined') {
+          (window as any).__healthCart = newItems;
+          // 이벤트 발생 (구독 페이지에서 감지할 수 있도록)
+          window.dispatchEvent(new CustomEvent('healthCartUpdated'));
+        }
+        
+        return newItems;
       });
+      
       setIsCartOpen(true);
     };
+
+    // 초기화: 페이지 로드 시 글로벌 객체에 건강구독함 데이터 설정
+    if (typeof window !== 'undefined') {
+      (window as any).__healthCart = cartItems;
+    }
 
     const handleCheckDuplicate = (e: CustomEvent) => {
       const { name } = e.detail;
       const isDuplicate = cartItems.some(item => item.product.name === name);
+      
       window.dispatchEvent(new CustomEvent('healthSubscriptionResponse', {
         detail: { isDuplicate }
       }));
     };
 
+    // 채팅 페이지의 추천 제품 추가 이벤트 리스너
+    const handleChatRecommendation = (e: CustomEvent) => {
+      const recommendation = e.detail;
+      
+      // 필요한 속성이 있는지 확인
+      if (!recommendation || !recommendation.name) {
+        console.error("유효하지 않은 추천 정보:", recommendation);
+        return;
+      }
+      
+      // CartItem 형식으로 변환
+      const cartProduct = {
+        id: recommendation.id || `rec-${Date.now()}`,
+        name: recommendation.name,
+        description: recommendation.description || "AI 추천 영양제",
+        category: recommendation.category || "영양",
+        pricePerUnit: recommendation.pricePerUnit || 0,
+        tags: recommendation.tags || [],
+        dailyDosage: recommendation.dailyDosage || 1,
+        dosageSchedule: recommendation.dosageSchedule || [],
+        monthlyPrice: recommendation.monthlyPrice || (recommendation.pricePerUnit * 30),
+        benefits: recommendation.benefits || [],
+        precautions: recommendation.precautions || [],
+        reason: recommendation.reason || "AI 맞춤 추천 영양제"
+      };
+      
+      setCartItems(prev => {
+        const existingItem = prev.find(item => item.product.name === cartProduct.name);
+        if (existingItem) {
+          return prev;
+        }
+        const newItems = [...prev, { product: cartProduct }];
+        
+        // 글로벌 객체에 건강구독함 데이터 저장 (구독 페이지와 공유)
+        if (typeof window !== 'undefined') {
+          (window as any).__healthCart = newItems;
+          // 이벤트 발생 (구독 페이지에서 감지할 수 있도록)
+          window.dispatchEvent(new CustomEvent('healthCartUpdated'));
+        }
+        
+        return newItems;
+      });
+      
+      setIsCartOpen(true);
+    };
+
     window.addEventListener('addToHealthSubscription', handleAddToCart as EventListener);
     window.addEventListener('checkHealthSubscription', handleCheckDuplicate as EventListener);
+    window.addEventListener('chatRecommendation', handleChatRecommendation as EventListener);
 
     return () => {
       window.removeEventListener('addToHealthSubscription', handleAddToCart as EventListener);
       window.removeEventListener('checkHealthSubscription', handleCheckDuplicate as EventListener);
+      window.removeEventListener('chatRecommendation', handleChatRecommendation as EventListener);
     };
   }, [cartItems]);
 
   const removeFromCart = (productId: string) => {
-    setCartItems(prevItems => prevItems.filter(item => item.product.id !== productId));
+    setCartItems(prevItems => {
+      const newItems = prevItems.filter(item => item.product.id !== productId);
+      
+      // 글로벌 객체에 건강구독함 데이터 저장 (구독 페이지와 공유)
+      if (typeof window !== 'undefined') {
+        (window as any).__healthCart = newItems;
+        // 이벤트 발생 (구독 페이지에서 감지할 수 있도록)
+        window.dispatchEvent(new CustomEvent('healthCartUpdated'));
+      }
+      
+      return newItems;
+    });
   };
 
   return (
@@ -132,22 +233,38 @@ export default function ClientLayout({
                 <>
                   <div className="space-y-4">
                     {cartItems.map(item => (
-                      <div key={item.product.id} className="flex items-center justify-between p-4 border-b">
-                        <div>
+                      <div key={item.product.id} className="flex flex-col p-4 border rounded-lg bg-gray-50">
+                        <div className="flex items-center justify-between mb-2">
                           <h3 className="font-medium">{item.product.name}</h3>
-                          <p className="text-sm text-gray-500">{item.product.description}</p>
-                        </div>
-                        <div className="flex items-center gap-4">
-                          <div className="text-right">
-                            <p className="text-lg font-semibold">{(item.product.pricePerUnit * 30).toLocaleString()}원/월</p>
-                            <p className="text-sm text-gray-500">구독중</p>
-                          </div>
                           <button
                             onClick={() => removeFromCart(item.product.id)}
                             className="text-red-500 hover:text-red-700"
                           >
                             ×
                           </button>
+                        </div>
+                        <p className="text-sm text-gray-500 mb-1">{item.product.description}</p>
+                        {item.product.reason && (
+                          <p className="text-xs text-blue-600 mb-2">"{item.product.reason}"</p>
+                        )}
+                        <div className="mt-2">
+                          <div className="flex flex-col gap-1 mt-2 text-xs text-gray-600">
+                            <p className="font-medium">복용 정보:</p>
+                            {item.product.dosageSchedule.map((schedule, idx) => (
+                              <p key={idx}>
+                                {schedule.time} {schedule.amount}정 
+                                {schedule.withMeal !== undefined && (
+                                  <> ({schedule.withMeal ? "식후" : "식전"})</>
+                                )}
+                              </p>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="flex justify-between items-center mt-3 pt-2 border-t border-gray-200">
+                          <span className="text-sm text-gray-500">구독 예정</span>
+                          <span className="text-lg font-semibold text-blue-600">
+                            {(item.product.monthlyPrice || item.product.pricePerUnit * 30 * item.product.dailyDosage).toLocaleString()}원/월
+                          </span>
                         </div>
                       </div>
                     ))}
@@ -157,7 +274,11 @@ export default function ClientLayout({
                     <div className="flex justify-between items-center mb-4">
                       <span className="text-lg font-semibold">총 구독 금액</span>
                       <span className="text-xl font-bold text-blue-600">
-                        {cartItems.reduce((sum, item) => sum + (item.product.pricePerUnit * 30), 0).toLocaleString()}원/월
+                        {cartItems.reduce((sum, item) => {
+                          const monthlyPrice = item.product.monthlyPrice || 
+                            (item.product.pricePerUnit * 30 * item.product.dailyDosage);
+                          return sum + monthlyPrice;
+                        }, 0).toLocaleString()}원/월
                       </span>
                     </div>
                     <button

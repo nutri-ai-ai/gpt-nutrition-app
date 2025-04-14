@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
-import { doc, updateDoc, deleteDoc, getDoc } from 'firebase/firestore'
+import { doc, updateDoc, deleteDoc, getDoc, serverTimestamp } from 'firebase/firestore'
 import { db } from '@/firebase/config'
 import { useAuth } from '@/context/auth-context'
 
@@ -223,41 +223,37 @@ export default function SurveyPage() {
 
   // 컴포넌트 마운트 시 임시 사용자 ID와 세션 상태 확인
   useEffect(() => {
-    console.log('설문 페이지 초기화 시작')
-    // 세션 체크
-    const lastActiveTime = localStorage.getItem('last_active_time')
-    const tempId = localStorage.getItem('tempId')
-    const emailVerified = localStorage.getItem('email_verified')
-    const email = localStorage.getItem('email')
+    const checkSession = async () => {
+      const tempId = localStorage.getItem('tempId')
+      const lastActiveTime = localStorage.getItem('last_active_time')
+      // 이메일 인증 체크 제거
+      
+      if (!tempId || !lastActiveTime) {
+        router.push('/signup-v2/email')
+        return
+      }
 
-    console.log('세션 상태:', { lastActiveTime, tempId, emailVerified, email })
-
-    if (!lastActiveTime || !tempId || emailVerified !== 'true') {
-      console.log('세션 검증 실패:', { lastActiveTime, tempId, emailVerified })
-      router.push('/signup-v2/email')
-      return
+      // 30분 초과 시 세션 만료
+      const lastActive = parseInt(lastActiveTime)
+      const now = Date.now()
+      const diffMinutes = (now - lastActive) / (1000 * 60)
+      
+      if (diffMinutes > 30) {
+        // 세션 만료 시 정리
+        localStorage.removeItem('tempId')
+        localStorage.removeItem('last_active_time')
+        // 이메일 관련 체크 제거
+        router.push('/signup-v2/email')
+        return
+      }
+      
+      // 세션 활성 시간 업데이트
+      localStorage.setItem('last_active_time', now.toString())
+      setTempUserId(tempId)
+      setIsLoading(false)
     }
-
-    const now = Date.now()
-    const diff = now - parseInt(lastActiveTime)
     
-    console.log('세션 유효 시간(분):', Math.round(diff / (60 * 1000)))
-    
-    if (diff >= 30 * 60 * 1000) {
-      console.log('세션 만료:', diff)
-      localStorage.removeItem('last_active_time')
-      localStorage.removeItem('tempId')
-      localStorage.removeItem('email_verified')
-      router.push('/signup-v2/email')
-      return
-    }
-    
-    // 세션 활성 시간 업데이트
-    localStorage.setItem('last_active_time', now.toString())
-    console.log('세션 활성 시간 업데이트:', now)
-    setTempUserId(tempId)
-    setIsLoading(false)
-    
+    checkSession()
   }, [router])
 
   // 현재 단계 그룹 (기본 정보/건강 설문/건강 목표) 가져오기
@@ -367,7 +363,18 @@ export default function SurveyPage() {
       // 설문 데이터 업데이트 (건강 목표 포함)
       const finalSurveyData = { ...surveyData }; // 기존 surveyData 복사
 
-      // Firestore 업데이트 (healthGoals를 별도 필드로 전달)
+      // Firebase에 직접 저장하여 확실하게 저장되도록 함
+      const userRef = doc(db, 'users', tempUserId);
+      await updateDoc(userRef, {
+        surveyData: finalSurveyData,
+        healthGoals: allSelections,
+        signupStep: 'survey_completed',
+        updatedAt: serverTimestamp(),
+      });
+      
+      console.log('Firebase에 직접 저장 완료');
+
+      // auth-context 함수도 호출하여 로컬 스토리지에도 저장
       await updateUserSignupData({
         surveyData: finalSurveyData, // 기존 설문 데이터만 전달
         healthGoals: allSelections,   // healthGoals는 별도 필드로 전달
@@ -383,7 +390,10 @@ export default function SurveyPage() {
          updatedAt: new Date().toISOString(),
       });
 
+      setIsSubmitting(false);
+      
       // 계정 생성 페이지로 이동
+      console.log('계정 생성 페이지로 이동 시작...');
       router.push('/signup-v2/account');
     } catch (error) {
       console.error('데이터 제출 중 오류:', error);
@@ -429,6 +439,22 @@ export default function SurveyPage() {
       case 'BASIC_INFO_WEIGHT':
         if (!surveyData.weight || surveyData.weight < 30 || surveyData.weight > 200) {
           setError('체중을 올바르게 입력해주세요 (30~200kg).')
+          return
+        }
+        break
+      case 'HEALTH_SURVEY_FATIGUE':
+      case 'HEALTH_SURVEY_SLEEP':
+      case 'HEALTH_SURVEY_DIGESTION':
+      case 'HEALTH_SURVEY_IMMUNITY':
+      case 'HEALTH_SURVEY_SKIN':
+      case 'HEALTH_SURVEY_CONCENTRATION':
+      case 'HEALTH_SURVEY_STRESS':
+      case 'HEALTH_SURVEY_JOINT':
+      case 'HEALTH_SURVEY_WEIGHT':
+      case 'HEALTH_SURVEY_DIET':
+        const field = healthSurveyFields[currentStep]
+        if (!surveyData[field]) {
+          setError('설문 항목을 선택해주세요.')
           return
         }
         break
@@ -563,6 +589,7 @@ export default function SurveyPage() {
     
     if (currentIndex === categories.length - 1) {
       // 마지막 카테고리인 경우 완료 처리
+      console.log('마지막 카테고리 완료. 제출 처리를 시작합니다.');
       handleSubmit()
     } else {
       // 다음 카테고리로 이동
@@ -804,8 +831,13 @@ export default function SurveyPage() {
             이전
           </button>
           <button
-            className="w-32 py-4 bg-blue-500 text-white font-medium rounded-xl hover:bg-blue-600 transition-colors duration-200 shadow-lg shadow-blue-500/30 text-lg"
+            className={`w-32 py-4 font-medium rounded-xl transition-colors duration-200 text-lg ${
+              value
+                ? 'bg-blue-500 text-white hover:bg-blue-600 shadow-lg shadow-blue-500/30'
+                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+            }`}
             onClick={handleNext}
+            disabled={!value}
           >
             다음
           </button>
@@ -1327,59 +1359,49 @@ export default function SurveyPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
-      {/* 헤더 */}
-      <header className="fixed top-0 left-0 right-0 bg-white shadow-sm z-10">
-        <div className="max-w-md mx-auto px-4 py-4">
-          <div className="flex items-center">
-            <div className="flex-1">
-              <div className="w-full bg-gray-200 h-2 rounded-full relative">
-                <div 
-                  className="h-full bg-blue-500 rounded-full transition-all duration-300"
-                  style={{ width: `${calculateProgress()}%` }}
-                />
-                <span 
-                  className="absolute -top-6 text-sm font-medium text-gray-600 transform -translate-x-1/2 whitespace-nowrap"
-                  style={{ 
-                    left: `${calculateProgress() / 2}%`
-                  }}
-                >
-                  {stepTitles[currentStep]}
-                </span>
-              </div>
-            </div>
+    <div className="min-h-screen bg-white">
+      {/* 헤더 부분 수정 */}
+      <header className="bg-white border-b border-gray-200 py-2 px-4 flex items-center justify-between sticky top-0 z-10">
+        <div className="flex items-center space-x-2">
+          <button 
+            onClick={handlePrev} 
+            className="p-2 rounded-full hover:bg-gray-100"
+            disabled={currentStep === 'BASIC_INFO_BIRTH'}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-600" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
+            </svg>
+          </button>
+          <h1 className="text-lg font-medium text-gray-800">{stepTitles[currentStep]}</h1>
+        </div>
+        <div className="flex items-center">
+          <div className="text-sm text-gray-500 mr-2">{calculateProgress()}%</div>
+          <div className="w-32 h-2 bg-gray-200 rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-primary-500 rounded-full" 
+              style={{ width: `${calculateProgress()}%` }}
+            ></div>
           </div>
         </div>
       </header>
 
-      {/* 메인 컨텐츠 */}
-      <div className="min-h-screen flex flex-col">
-        {/* 입력 영역 */}
-        <div className="flex-1 flex items-center justify-center px-4">
-          <div className="w-full max-w-md">
-            {renderStep()}
+      {/* 메인 콘텐츠 */}
+      <main className="max-w-md mx-auto py-4 px-4 mt-3">
+        {isLoading ? (
+          <div className="flex justify-center items-center h-64">
+            <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-primary-500"></div>
           </div>
-        </div>
+        ) : (
+          renderStep()
+        )}
 
-        {/* 푸터 */}
-        <footer className="py-8 bg-gradient-to-t from-blue-50/50">
-          <p className="text-center text-gray-600 text-sm leading-relaxed">
-            AI-개인맞춤형 건강설계로<br />
-            스마트한 건강생활을 시작하세요
-          </p>
-        </footer>
-      </div>
-
-      <style jsx global>{`
-        @keyframes spin-slow {
-          from {
-            transform: rotate(0deg);
-          }
-          to {
-            transform: rotate(360deg);
-          }
-        }
-      `}</style>
-    </main>
+        {/* 오류 메시지 */}
+        {error && (
+          <div className="mt-4 p-3 bg-red-100 text-red-700 rounded-md">
+            {error}
+          </div>
+        )}
+      </main>
+    </div>
   )
 }
