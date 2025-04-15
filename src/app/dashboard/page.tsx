@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { doc, getDoc, deleteDoc } from 'firebase/firestore'
+import { doc, getDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { motion } from 'framer-motion'
 import { FaComments } from 'react-icons/fa'  // AI 채팅 아이콘 추가
@@ -65,19 +65,23 @@ export default function DashboardPage() {
       }
 
       try {
-        // username을 문서 ID로 사용하여 사용자 데이터 조회
-        const userDocRef = doc(db, 'users', storedUsername);
-        const docSnapshot = await getDoc(userDocRef);
+        // username을 문서 ID로 직접 사용하지 않고, 쿼리로 username 필드 검색
+        const usersRef = collection(db, 'users');
+        const q = query(usersRef, where('username', '==', storedUsername));
+        const querySnapshot = await getDocs(q);
 
-        if (docSnapshot.exists()) {
-          setUserData(docSnapshot.data());
-          console.log('사용자 데이터 로드 성공:', docSnapshot.data());
+        if (!querySnapshot.empty) {
+          // 사용자 문서 찾음 - 첫 번째 문서 사용 (username은 유니크해야 함)
+          const userDoc = querySnapshot.docs[0];
+          setUserData(userDoc.data());
+          console.log('사용자 데이터 로드 성공:', userDoc.data());
+          
+          // 추가적으로 문서 ID를 로컬 스토리지에 저장하여 나중에 사용 가능 (옵션)
+          localStorage.setItem('docId', userDoc.id);
         } else {
           console.error('사용자 데이터가 존재하지 않습니다. username:', storedUsername);
           // 데이터가 없는 경우, 로그아웃 처리 후 로그인 페이지로 이동
           handleLogout(); // 로그아웃 함수 호출 (아래 정의된 함수)
-          // handleLogout에서 리디렉션하므로 여기서 추가 리디렉션 필요 없음
-          // setLoading(false)는 handleLogout 호출 전 또는 finally 블록에서 처리됨
         }
       } catch (err) {
         console.error('사용자 데이터 로드 오류:', err);

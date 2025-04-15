@@ -71,7 +71,11 @@ export default function LoginPage() {
       
       // 5. 사용자 정보를 로컬 스토리지에 저장 (chat 페이지 호환을 위해)
       try {
+        // username은 사용자 식별용
         localStorage.setItem('username', username.trim());
+        // docId는 Firestore 문서 ID (기존 uid와 구분)
+        localStorage.setItem('docId', userId);
+        // 이전 코드와의 호환성을 위해 uid도 저장
         localStorage.setItem('uid', userId);
         
         // 프로필 정보 로컬 스토리지에 저장
@@ -81,6 +85,7 @@ export default function LoginPage() {
         if (userData.birthDate) localStorage.setItem('birthDate', userData.birthDate);
         if (userData.name) localStorage.setItem('name', userData.name);
         
+        console.log('로그인 성공! 사용자:', username.trim(), '/ 문서 ID:', userId);
         console.log('모든 사용자 정보 로컬 스토리지에 저장됨');
       } catch (storageError) {
         console.error('로컬 스토리지 저장 실패:', storageError);
