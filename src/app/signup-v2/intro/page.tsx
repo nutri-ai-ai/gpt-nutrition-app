@@ -78,6 +78,15 @@ export default function IntroV2Page() {
         
         // 사용자 데이터 로드
         console.log('[인트로] 사용자 데이터 로드 시도:', tempId);
+        if (!db) {
+          console.error('[인트로] Firestore가 초기화되지 않았습니다');
+          localStorage.removeItem('intro_redirecting');
+          if (isMounted) {
+            setError('시스템 초기화 중 오류가 발생했습니다');
+            setIsInitialized(true);
+          }
+          return;
+        }
         const userDoc = await getDoc(doc(db, 'users', tempId));
         
         if (!userDoc.exists()) {
