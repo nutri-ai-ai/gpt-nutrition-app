@@ -112,6 +112,9 @@ export function useFirestoreDoc(path: string | null, docId: string | null, optio
   return useData(
     path && docId ? `${path}/${docId}` : null,
     async () => {
+      if (!db) {
+        throw new Error('Firestore is not initialized');
+      }
       const docRef = doc(db, path as string, docId as string);
       const docSnap = await getDoc(docRef);
       
@@ -140,6 +143,10 @@ export function useUserProfileByUsername(username: string | null, options = {}) 
     username ? `users/by-username/${username}` : null,
     async () => {
       if (!username) throw new Error('Username is required');
+      
+      if (!db) {
+        throw new Error('Firestore is not initialized');
+      }
       
       const usersRef = collection(db, 'users');
       const q = query(usersRef, where('username', '==', username));
