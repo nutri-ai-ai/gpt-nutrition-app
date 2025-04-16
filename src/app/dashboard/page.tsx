@@ -1,184 +1,192 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { doc, getDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { FaComments } from 'react-icons/fa'  // AI 채팅 아이콘 추가
 import { IoMdHeart } from 'react-icons/io'
 import { GiStomach, GiMedicines } from 'react-icons/gi'
 import { RiMentalHealthLine } from 'react-icons/ri'
 import { TbEye } from 'react-icons/tb'
-import Slider from 'react-slick'
-import "slick-carousel/slick/slick.css"
-import "slick-carousel/slick/slick-theme.css"
-import { healthTips } from '@/data/healthTips'
 import Link from 'next/link'
+// 슬라이더 관련 임포트를 지연 로딩으로 변경
+import dynamic from 'next/dynamic'
+import { healthTips } from '@/data/healthTips'
+import { useAuth } from '@/context/auth-context'
+
+// 타입 정의 추가
+interface SliderProps {
+  dots?: boolean;
+  infinite?: boolean;
+  speed?: number;
+  slidesToShow?: number;
+  slidesToScroll?: number;
+  arrows?: boolean;
+  autoplay?: boolean;
+  autoplaySpeed?: number;
+  pauseOnHover?: boolean;
+  responsive?: Array<{
+    breakpoint: number;
+    settings: {
+      slidesToShow: number;
+      slidesToScroll: number;
+    };
+  }>;
+  children?: React.ReactNode;
+}
+
+// 슬라이더 컴포넌트 지연 로딩
+const Slider = dynamic<SliderProps>(() => import('react-slick').then(mod => mod.default), { 
+  ssr: false,
+  loading: () => <div className="h-32 bg-gray-100 rounded-lg animate-pulse"></div>
+})
+
+// CSS 파일 지연 로딩을 위한 헬퍼 함수
+const loadSlickCSS = () => {
+  if (typeof window !== 'undefined') {
+    // @ts-ignore: CSS 모듈 import 오류 무시
+    import('slick-carousel/slick/slick.css').catch(() => console.warn('슬라이더 CSS 로드 실패'));
+    // @ts-ignore: CSS 모듈 import 오류 무시
+    import('slick-carousel/slick/slick-theme.css').catch(() => console.warn('슬라이더 테마 CSS 로드 실패'));
+  }
+}
 
 export default function DashboardPage() {
   const router = useRouter()
   const [userData, setUserData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [currentTipIndex, setCurrentTipIndex] = useState(0)
+  const [slickLoaded, setSlickLoaded] = useState(false)
+  const { user, userProfile, loading: authLoading, dataLoading, refreshUserProfile } = useAuth()
 
-  // 건강 팁 자동 변경
+  // 슬라이더 CSS 지연 로딩
   useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentTipIndex((prevIndex) => (prevIndex + 1) % healthTips.length)
-    }, 10000) // 10초마다 변경
-
-    return () => clearInterval(interval)
+    loadSlickCSS()
+    setSlickLoaded(true)
   }, [])
 
-  // --- 사용자 데이터 로드 및 임시 데이터 정리 useEffect ---
+  // 건강 팁 자동 변경 - 최적화: 페이지가 포커스 상태일 때만 실행
   useEffect(() => {
-    const initializeDashboard = async () => {
-      setLoading(true); // 로딩 시작
+    // 초기 로딩 시에는 팁 변경을 지연시킵니다
+    if (loading) return
 
-      // --- 임시 데이터 정리 로직 ---
-      const tempId = localStorage.getItem('tempId');
-      if (tempId) {
-        console.log(`대시보드 진입: 임시 문서 삭제 시도 (tempId: ${tempId})`);
-        const tempUserRef = doc(db, 'users', tempId);
-        try {
-          await deleteDoc(tempUserRef);
-          console.log(`임시 사용자 문서 삭제 성공 (tempId: ${tempId})`);
-        } catch (deleteError) {
-          console.error(`임시 사용자 문서 삭제 실패 (tempId: ${tempId}):`, deleteError);
-          // 실패해도 계속 진행
-        } finally {
-          // 성공/실패 여부와 관계없이 로컬 스토리지에서 tempId 제거
-          localStorage.removeItem('tempId');
-          console.log('로컬 스토리지에서 tempId 제거 완료');
-        }
-      }
-      // --- 임시 데이터 정리 끝 ---
-
-      // --- 최종 사용자 데이터 로드 (username 기반) ---
-      const storedUsername = localStorage.getItem('username'); // username 가져오기
-      if (!storedUsername) {
-        console.log('로그인 정보(username) 없음. 로그인 페이지로 이동합니다.');
-        router.push('/login');
-        setLoading(false); // username 없으면 로딩 종료하고 리턴
-        return;
-      }
-
-      try {
-        // username을 문서 ID로 직접 사용하지 않고, 쿼리로 username 필드 검색
-        const usersRef = collection(db, 'users');
-        const q = query(usersRef, where('username', '==', storedUsername));
-        const querySnapshot = await getDocs(q);
-
-        if (!querySnapshot.empty) {
-          // 사용자 문서 찾음 - 첫 번째 문서 사용 (username은 유니크해야 함)
-          const userDoc = querySnapshot.docs[0];
-          setUserData(userDoc.data());
-          console.log('사용자 데이터 로드 성공:', userDoc.data());
-          
-          // 추가적으로 문서 ID를 로컬 스토리지에 저장하여 나중에 사용 가능 (옵션)
-          localStorage.setItem('docId', userDoc.id);
-        } else {
-          console.error('사용자 데이터가 존재하지 않습니다. username:', storedUsername);
-          // 데이터가 없는 경우, 로그아웃 처리 후 로그인 페이지로 이동
-          handleLogout(); // 로그아웃 함수 호출 (아래 정의된 함수)
-        }
-      } catch (err) {
-        console.error('사용자 데이터 로드 오류:', err);
-        // 오류 발생 시 로그아웃 처리 후 로그인 페이지로 이동
-        handleLogout(); // 로그아웃 함수 호출
-      } finally {
-         setLoading(false); // 데이터 로드 시도 후 로딩 종료
-      }
-      // --- 최종 사용자 데이터 로드 끝 ---
-    };
-
-    initializeDashboard();
-  }, [router]); // router만 의존성 배열에 포함
-
-  // 로그아웃 처리 (기존 함수 유지 또는 개선)
-  const handleLogout = () => {
-    console.log('로그아웃 처리 시작...');
-    // 로컬 스토리지 정리 (signOut 함수와 유사하게 필요한 항목 모두 제거)
-    localStorage.removeItem('username');
-    localStorage.removeItem('uid'); // 혹시 남아있을 수 있으니 제거
-    localStorage.removeItem('gender');
-    localStorage.removeItem('height');
-    localStorage.removeItem('weight');
-    localStorage.removeItem('birthDate');
-    localStorage.removeItem('name');
-    localStorage.removeItem('email');
-    localStorage.removeItem('healthGoals');
-    localStorage.removeItem('signupStep');
-    localStorage.removeItem('cart_items');
-    localStorage.removeItem('tempId'); // 여기서도 확실히 제거
-    localStorage.removeItem('last_active_time');
-    localStorage.removeItem('email_verified');
-
-    router.push('/login');
-    console.log('로그아웃 처리 완료. 로그인 페이지로 이동.');
-  };
-
-  // 구독 상태 및 만료일 처리
-  const getSubscriptionStatus = () => {
-    if (userData.subscriptionStatus && userData.subscriptionDate) {
-      const subscriptionEndDate = new Date(userData.subscriptionDate)
-      const currentDate = new Date()
-      const daysLeft = Math.floor((subscriptionEndDate.getTime() - currentDate.getTime()) / (1000 * 3600 * 24))
-
-      if (daysLeft <= 7) {
-        // 구독 만료 7일 전부터 빨간색으로 표시
-        return (
-          <p className="text-red-600 font-semibold">구독 만료일: {subscriptionEndDate.toLocaleDateString()} (남은 일: {daysLeft}일)</p>
-        )
-      } else {
-        return (
-          <p className="text-green-600 font-semibold">구독 상태: {userData.subscriptionStatus} (구독기간: {subscriptionEndDate.toLocaleDateString()})</p>
-        )
-      }
-    } else {
-      return <p className="text-gray-500">구독 상태: 미구독</p>
+    let interval: NodeJS.Timeout | null = null;
+    
+    // 페이지가 활성화된 상태일 때만 인터벌 실행
+    if (document.visibilityState === 'visible') {
+      interval = setInterval(() => {
+        setCurrentTipIndex((prevIndex) => (prevIndex + 1) % healthTips.length)
+      }, 10000) // 10초마다 변경
     }
-  }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <p>Loading...</p>
-      </div>
-    )
-  }
-
-  if (!userData) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <p>사용자 정보를 불러오지 못했습니다.</p>
-      </div>
-    )
-  }
-
-  const settings = {
-    dots: true,
-    infinite: true,
-    speed: 500,
-    slidesToShow: 2,
-    slidesToScroll: 1,
-    arrows: true,
-    autoplay: true,
-    autoplaySpeed: 3000,
-    pauseOnHover: true,
-    responsive: [
-      {
-        breakpoint: 640,
-        settings: {
-          slidesToShow: 1,
-          slidesToScroll: 1
-        }
+    // 페이지 가시성 변경 이벤트 리스너
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && !interval) {
+        interval = setInterval(() => {
+          setCurrentTipIndex((prevIndex) => (prevIndex + 1) % healthTips.length)
+        }, 10000)
+      } else if (document.visibilityState === 'hidden' && interval) {
+        clearInterval(interval)
+        interval = null
       }
-    ]
-  };
+    }
 
-  const sampleSupplements = [
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      if (interval) clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [loading])
+
+  // 로그아웃 함수 - useCallback으로 메모이제이션
+  const handleLogout = useCallback(() => {
+    try {
+      localStorage.removeItem('username')
+      localStorage.removeItem('uid')
+      router.push('/login')
+    } catch (error) {
+      console.error('로그아웃 오류:', error)
+    }
+  }, [router])
+
+  // 구독 상태 확인 함수 - useMemo로 메모이제이션
+  const getSubscriptionStatus = useMemo(() => {
+    if (!userProfile) return null
+    
+    // 구독 정보 표시 로직
+    if (userProfile.subscription && userProfile.subscription.status === 'active') {
+      return (
+        <div className="text-green-600 flex items-center">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+          </svg>
+          <div>
+            <p className="font-semibold">프리미엄 구독 중</p>
+            <p className="text-sm opacity-75">다음 결제일: {userProfile.subscription.nextBillingDate || '2023-12-31'}</p>
+          </div>
+        </div>
+      )
+    } else if (userProfile.subscription && userProfile.subscription.status === 'trial') {
+      return (
+        <div className="text-blue-600 flex items-center">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
+          </svg>
+          <div>
+            <p className="font-semibold">무료 체험 중</p>
+            <p className="text-sm opacity-75">종료일: {userProfile.subscription.expiryDate || '2023-12-31'}</p>
+          </div>
+        </div>
+      )
+    } else {
+      return (
+        <div className="text-gray-600 flex items-center">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+          </svg>
+          <div>
+            <p className="font-semibold">기본 플랜</p>
+            <button 
+              onClick={() => router.push('/subscription')} 
+              className="text-sm text-blue-600 hover:underline mt-1"
+            >
+              프리미엄으로 업그레이드
+            </button>
+          </div>
+        </div>
+      )
+    }
+  }, [userProfile, router])
+
+  // 사용자 데이터 로드 useEffect
+  useEffect(() => {
+    // 인증 상태 체크 및 리디렉션
+    if (!authLoading && !user) {
+      router.push('/login');
+      return;
+    }
+
+    // 프로필 데이터가 있으면 로컬 상태로 설정
+    if (userProfile) {
+      setUserData(userProfile);
+      setLoading(false);
+    } else if (!dataLoading && user) {
+      // 프로필 데이터가 없고 로드 중이 아니면 데이터 새로고침 요청
+      refreshUserProfile()
+        .then(() => setLoading(false))
+        .catch((err) => {
+          console.error('프로필 데이터 로드 오류:', err);
+          setLoading(false);
+        });
+    }
+  }, [user, userProfile, authLoading, dataLoading, refreshUserProfile, router]);
+  
+
+  // 샘플 영양제 데이터 - useMemo로 메모이제이션
+  const sampleSupplements = useMemo(() => [
     {
       id: 'omega3',
       name: "오메가3",
@@ -214,21 +222,124 @@ export default function DashboardPage() {
       icon: <RiMentalHealthLine className="w-8 h-8" />,
       color: "from-purple-400 to-purple-600"
     }
-  ];
+  ], []);
+
+  // 슬라이더 설정 - useMemo로 메모이제이션
+  const sliderSettings = useMemo(() => ({
+    dots: true,
+    infinite: true,
+    speed: 500,
+    slidesToShow: 2,
+    slidesToScroll: 1,
+    arrows: true,
+    autoplay: true,
+    autoplaySpeed: 3000,
+    pauseOnHover: true,
+    responsive: [
+      {
+        breakpoint: 640,
+        settings: {
+          slidesToShow: 1,
+          slidesToScroll: 1
+        }
+      }
+    ]
+  }), []);
+
+  // 오늘의 추천 영양제 섹션 렌더링 함수
+  const renderSupplementsSection = () => {
+    if (!slickLoaded) {
+      return (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="h-32 bg-gray-100 rounded-lg animate-pulse"></div>
+          <div className="h-32 bg-gray-100 rounded-lg animate-pulse"></div>
+        </div>
+      );
+    }
+
+    return (
+      <Slider
+        dots={true}
+        infinite={true}
+        speed={500}
+        slidesToShow={2}
+        slidesToScroll={1}
+        arrows={true}
+        autoplay={true}
+        autoplaySpeed={3000}
+        pauseOnHover={true}
+        responsive={[
+          {
+            breakpoint: 640,
+            settings: {
+              slidesToShow: 1,
+              slidesToScroll: 1
+            }
+          }
+        ]}
+      >
+        {sampleSupplements.map((supplement) => (
+          <div key={supplement.id} className="px-2">
+            <div 
+              className={`bg-gradient-to-br ${supplement.color} rounded-xl p-4 text-white h-full`}
+              onClick={() => router.push(`/nutrition-details?id=${supplement.id}`)}
+            >
+              <div className="flex items-center gap-3 mb-2">
+                <div className="p-2 bg-white/10 rounded-full">
+                  {supplement.icon}
+                </div>
+                <h3 className="text-lg font-bold">{supplement.name}</h3>
+              </div>
+              <p className="text-sm text-white/90">{supplement.description}</p>
+            </div>
+          </div>
+        ))}
+      </Slider>
+    );
+  };
+
+  // 인증 상태 확인
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push('/login')
+    }
+  }, [user, authLoading, router])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+        <p className="ml-3 text-gray-600">로딩 중...</p>
+      </div>
+    )
+  }
+
+  if (!userData) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-white">
+        <div className="text-center">
+          <p className="text-lg text-gray-700 mb-4">사용자 정보를 불러오지 못했습니다.</p>
+          <button 
+            onClick={() => router.push('/login')} 
+            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+          >
+            로그인 페이지로 이동
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
-      <motion.div
-        initial={{ opacity: 0, y: 40 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 1.2, ease: 'easeOut' }}
+    <main className="min-h-screen bg-white">
+      <div
         className="max-w-4xl mx-auto p-4 md:p-8 space-y-8"
       >
         {/* 상단 헤더 */}
         <header className="flex justify-between items-center">
           <div>
             <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-purple-600">
-              안녕하세요, {userData.name}님!
+              안녕하세요, {userData.name || userData.username}님!
             </h1>
             <p className="text-gray-600 mt-2">
               오늘도 건강한 하루 보내세요 ✨
@@ -244,12 +355,11 @@ export default function DashboardPage() {
           </button>
         </header>
 
-        {/* AI 채팅 바로가기 카드 */}
+        {/* AI 채팅 바로가기 카드 - 필수 애니메이션만 유지 */}
         <motion.section
           whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={() => router.push('/chat')}
           className="bg-gradient-to-r from-blue-500 to-purple-600 rounded-2xl shadow-lg p-6 text-white cursor-pointer group transition-all duration-300 hover:shadow-xl"
+          onClick={() => router.push('/chat')}
         >
           <div className="flex items-center justify-between">
             <div>
@@ -266,76 +376,20 @@ export default function DashboardPage() {
         <section className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
           <h2 className="text-xl font-bold mb-4 text-gray-800">구독 상태</h2>
           <div className="bg-gray-50 rounded-xl p-4">
-            {getSubscriptionStatus()}
+            {getSubscriptionStatus}
           </div>
         </section>
 
-        {/* 오늘의 추천 영양제 */}
+        {/* 오늘의 추천 영양제 - 지연 로딩된 슬라이더 사용 */}
         <section className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
-          <h2 className="text-xl font-bold mb-6 text-gray-800">오늘의 추천 영양제</h2>
-          <div className="relative px-2">
-            <style jsx global>{`
-              .supplement-slider .slick-arrow {
-                width: 40px;
-                height: 40px;
-                background-color: rgba(255, 255, 255, 0.9);
-                border-radius: 50%;
-                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-                z-index: 10;
-              }
-              .supplement-slider .slick-arrow:hover {
-                background-color: white;
-              }
-              .supplement-slider .slick-prev {
-                left: -20px;
-              }
-              .supplement-slider .slick-next {
-                right: -20px;
-              }
-              .supplement-slider .slick-prev:before,
-              .supplement-slider .slick-next:before {
-                color: #4B5563;
-                font-size: 24px;
-              }
-            `}</style>
-            <Slider {...settings} className="supplement-slider -mx-2">
-              {sampleSupplements.map((supp, index) => (
-                <div key={index} className="px-2 h-[200px]">
-                  <motion.div
-                    whileHover={{ scale: 1.03 }}
-                    className={`bg-gradient-to-br ${supp.color} rounded-xl p-5 text-white h-full flex flex-col cursor-pointer`}
-                    onClick={() => router.push(`/nutrition-details?id=${supp.id}`)}
-                  >
-                    <div className="flex items-start gap-4 flex-1">
-                      <div className="bg-white/20 rounded-lg p-3 backdrop-blur-sm">
-                        {supp.icon}
-                      </div>
-                      <div className="flex-1">
-                        <h3 className="font-bold text-lg mb-1">{supp.name}</h3>
-                        <p className="text-sm text-white/90 line-clamp-2">{supp.description}</p>
-                      </div>
-                    </div>
-                    <div className="mt-auto flex justify-between items-center">
-                      <span className="text-xs bg-white/20 rounded-full px-3 py-1 backdrop-blur-sm">
-                        추천 섭취: 1일 1회
-                      </span>
-                      <span className="text-xs bg-white/20 rounded-full px-3 py-1 backdrop-blur-sm">
-                        자세히 보기
-                      </span>
-                    </div>
-                  </motion.div>
-                </div>
-              ))}
-            </Slider>
-          </div>
+          <h2 className="text-xl font-bold mb-4 text-gray-800">오늘의 추천 영양제</h2>
+          {renderSupplementsSection()}
         </section>
 
-        {/* 건강기록 섹션 */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* 건강기록하기 카드 */}
-          <motion.div
-            whileHover={{ scale: 1.02 }}
-            className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl shadow-lg overflow-hidden cursor-pointer"
+          {/* 건강기록하기 카드 - 애니메이션 최소화 */}
+          <div
+            className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl shadow-lg overflow-hidden cursor-pointer hover:shadow-xl transition-shadow"
             onClick={() => router.push('/health-records')}
           >
             <div className="p-6 text-white">
@@ -349,12 +403,11 @@ export default function DashboardPage() {
               </div>
               <p className="text-white/80">오늘의 건강 상태, 운동, 식사 등을 기록하고 관리해보세요.</p>
             </div>
-          </motion.div>
+          </div>
 
-          {/* 내 건강기록 보기 카드 */}
-          <motion.div
-            whileHover={{ scale: 1.02 }}
-            className="bg-gradient-to-br from-green-500 to-green-600 rounded-2xl shadow-lg overflow-hidden cursor-pointer"
+          {/* 내 건강기록 보기 카드 - 애니메이션 최소화 */}
+          <div
+            className="bg-gradient-to-br from-green-500 to-green-600 rounded-2xl shadow-lg overflow-hidden cursor-pointer hover:shadow-xl transition-shadow"
             onClick={() => router.push('/view-health-records')}
           >
             <div className="p-6 text-white">
@@ -369,14 +422,13 @@ export default function DashboardPage() {
               </div>
               <p className="text-white/80">기록된 건강 데이터를 달력으로 확인하고 관리하세요.</p>
             </div>
-          </motion.div>
+          </div>
         </div>
 
-        {/* 빠른 메뉴 그리드 */}
+        {/* 빠른 메뉴 그리드 - 애니메이션 최소화 */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <motion.div
-            whileHover={{ scale: 1.02 }}
-            className="bg-gradient-to-br from-orange-500 to-pink-600 rounded-2xl shadow-lg overflow-hidden cursor-pointer"
+          <div
+            className="bg-gradient-to-br from-orange-500 to-pink-600 rounded-2xl shadow-lg overflow-hidden cursor-pointer hover:shadow-xl transition-shadow"
             onClick={() => router.push('/nutrition-details')}
           >
             <div className="p-6 text-white">
@@ -388,12 +440,11 @@ export default function DashboardPage() {
               </div>
               <p className="text-white/80">맞춤 영양제 정보를 확인하고 관리해보세요.</p>
             </div>
-          </motion.div>
+          </div>
 
           <Link href="/health-mindmap" className="group block">
-            <motion.div
-              whileHover={{ scale: 1.02 }}
-              className="bg-gradient-to-br from-indigo-500 to-blue-600 rounded-2xl p-6 shadow-lg"
+            <div
+              className="bg-gradient-to-br from-indigo-500 to-blue-600 rounded-2xl p-6 shadow-lg hover:shadow-xl transition-shadow"
             >
               <div className="flex items-center gap-4">
                 <div className="p-3 bg-white/10 rounded-xl backdrop-blur-sm">
@@ -404,31 +455,11 @@ export default function DashboardPage() {
                   <p className="text-blue-100 mt-1">AI가 분석한 사용자에 맞는 운동, 수면, 영양을 확인해보세요</p>
                 </div>
               </div>
-            </motion.div>
+            </div>
           </Link>
 
-          <motion.div
-            whileHover={{ scale: 1.02 }}
-            className="bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl shadow-lg overflow-hidden cursor-pointer"
-            onClick={() => router.push('/subscription')}
-          >
-            <div className="p-6 text-white">
-              <div className="flex items-center gap-4 mb-4">
-                <div className="p-3 bg-white/10 rounded-xl">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M5 5a3 3 0 015-2.236A3 3 0 0114.83 6H16a2 2 0 110 4h-5V9a1 1 0 10-2 0v1H4a2 2 0 110-4h1.17C5.06 5.687 5 5.35 5 5zm4 1V5a1 1 0 10-1 1h1zm3 0a1 1 0 10-1-1v1h1z" clipRule="evenodd" />
-                    <path d="M9 11H3v5a2 2 0 002 2h4v-7zM11 18h4a2 2 0 002-2v-5h-6v7z" />
-                  </svg>
-                </div>
-                <h3 className="text-2xl font-bold">구독 관리</h3>
-              </div>
-              <p className="text-white/80">구독 상태를 확인하고 관리하세요.</p>
-            </div>
-          </motion.div>
-
-          <motion.div
-            whileHover={{ scale: 1.02 }}
-            className="bg-gradient-to-br from-gray-700 to-gray-900 rounded-2xl shadow-lg overflow-hidden cursor-pointer"
+          <div
+            className="bg-gradient-to-br from-gray-700 to-gray-900 rounded-2xl shadow-lg overflow-hidden cursor-pointer hover:shadow-xl transition-shadow"
             onClick={() => router.push('/membership-info')}
           >
             <div className="p-6 text-white">
@@ -442,50 +473,25 @@ export default function DashboardPage() {
               </div>
               <p className="text-white/80">내 정보를 확인하고 수정하세요.</p>
             </div>
-          </motion.div>
-        </div>
-
-        {/* 건강 팁 */}
-        <motion.section 
-          className="text-center py-6"
-          key={currentTipIndex}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.5 }}
-        >
-          <p className="text-sm text-gray-600">
-            {healthTips[currentTipIndex]}
-          </p>
-        </motion.section>
-      </motion.div>
-
-      {/* 푸터 */}
-      <footer className="bg-white border-t border-gray-100 py-8">
-        <div className="max-w-5xl mx-auto px-4">
-          <div className="flex flex-col md:flex-row justify-between items-center gap-6">
-            <div className="text-center md:text-left">
-              <h3 className="text-3xl font-bold bg-gradient-to-r from-blue-500 to-blue-700 bg-clip-text text-transparent">
-                NUTRI-AI
-              </h3>
-              <p className="mt-2 text-gray-600">당신의 건강한 삶을 위한 AI 영양 파트너</p>
-            </div>
-            <div className="flex flex-col items-center md:items-end gap-2">
-              <div className="flex items-center gap-4">
-                <a href="#" className="text-gray-600 hover:text-blue-600 transition-colors">
-                  이용약관
-                </a>
-                <span className="text-gray-400">|</span>
-                <a href="#" className="text-gray-600 hover:text-blue-600 transition-colors">
-                  개인정보처리방침
-                </a>
-              </div>
-              <p className="text-sm text-gray-500">
-                © {new Date().getFullYear()} NUTRI-AI. All rights reserved.
-              </p>
-            </div>
           </div>
         </div>
-      </footer>
+
+        {/* 건강 팁 - 최적화된 애니메이션 */}
+        <AnimatePresence mode="wait">
+          <motion.section 
+            key={currentTipIndex}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="text-center py-6"
+          >
+            <p className="text-sm text-gray-600">
+              {healthTips[currentTipIndex]}
+            </p>
+          </motion.section>
+        </AnimatePresence>
+      </div>
     </main>
   )
 }

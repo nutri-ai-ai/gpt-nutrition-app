@@ -224,33 +224,70 @@ export default function SurveyPage() {
   // 컴포넌트 마운트 시 임시 사용자 ID와 세션 상태 확인
   useEffect(() => {
     const checkSession = async () => {
-      const tempId = localStorage.getItem('tempId')
-      const lastActiveTime = localStorage.getItem('last_active_time')
-      // 이메일 인증 체크 제거
-      
-      if (!tempId || !lastActiveTime) {
+      try {
+        // 세션 검증
+        const emailVerified = localStorage.getItem('email_verified')
+        const tempId = localStorage.getItem('tempId')
+        const lastActiveTime = localStorage.getItem('last_active_time')
+        const signupName = localStorage.getItem('signup_name')
+        
+        // 인증 상태가 없으면 이메일 인증 페이지로 리디렉션
+        if (emailVerified !== 'true' || !tempId || !lastActiveTime) {
+          router.push('/signup-v2/email')
+          return
+        }
+        
+        // 세션 만료 확인 (30분)
+        const lastActive = parseInt(lastActiveTime)
+        const now = Date.now()
+        const diffMinutes = (now - lastActive) / (1000 * 60)
+        
+        if (diffMinutes > 30) {
+          router.push('/signup-v2/email')
+          return
+        }
+        
+        // 세션 업데이트
+        localStorage.setItem('last_active_time', now.toString())
+        
+        // 회원가입 진행 중임을 표시하는 쿠키 설정
+        document.cookie = 'signup_in_progress=true; path=/; max-age=3600; SameSite=Lax';
+        
+        // 이름이 없으면 기본 페이지로 리디렉션
+        if (!signupName) {
+          router.push('/signup-v2')
+          return
+        }
+        
+        // 사용자 문서 로드
+        setTempUserId(tempId)
+        const userDoc = await getDoc(doc(db, 'users', tempId))
+        
+        if (!userDoc.exists()) {
+          router.push('/signup-v2/email')
+          return
+        }
+        
+        // 로그인 상태로 가정
+        setIsLoading(false)
+        
+        // 기존 설문 데이터 로드
+        const userData = userDoc.data()
+        if (userData.surveyData) {
+          // 저장된 설문 데이터가 있으면 로드
+          setSurveyData(userData.surveyData)
+        }
+        
+        if (userData.healthGoals && userData.healthGoals.length > 0) {
+          // 저장된 건강 목표가 있으면 로드
+          setSelectedHealthGoals([...userData.healthGoals])
+        }
+      } catch (error) {
+        console.error('세션 확인 오류:', error)
         router.push('/signup-v2/email')
-        return
+      } finally {
+        setIsLoading(false)
       }
-
-      // 30분 초과 시 세션 만료
-      const lastActive = parseInt(lastActiveTime)
-      const now = Date.now()
-      const diffMinutes = (now - lastActive) / (1000 * 60)
-      
-      if (diffMinutes > 30) {
-        // 세션 만료 시 정리
-        localStorage.removeItem('tempId')
-        localStorage.removeItem('last_active_time')
-        // 이메일 관련 체크 제거
-        router.push('/signup-v2/email')
-        return
-      }
-      
-      // 세션 활성 시간 업데이트
-      localStorage.setItem('last_active_time', now.toString())
-      setTempUserId(tempId)
-      setIsLoading(false)
     }
     
     checkSession()
@@ -363,38 +400,33 @@ export default function SurveyPage() {
       // 설문 데이터 업데이트 (건강 목표 포함)
       const finalSurveyData = { ...surveyData }; // 기존 surveyData 복사
 
-      // Firebase에 직접 저장하여 확실하게 저장되도록 함
-      const userRef = doc(db, 'users', tempUserId);
-      await updateDoc(userRef, {
-        surveyData: finalSurveyData,
-        healthGoals: allSelections,
-        signupStep: 'survey_completed',
-        updatedAt: serverTimestamp(),
-      });
-      
-      console.log('Firebase에 직접 저장 완료');
-
-      // auth-context 함수도 호출하여 로컬 스토리지에도 저장
-      await updateUserSignupData({
-        surveyData: finalSurveyData, // 기존 설문 데이터만 전달
-        healthGoals: allSelections,   // healthGoals는 별도 필드로 전달
-        signupStep: 'survey_completed',
-        updatedAt: new Date().toISOString(),
-      });
-
-      // 데이터 저장 확인을 위한 로그
-      console.log('Firebase에 저장 요청한 데이터 구조:', {
-         surveyData: finalSurveyData,
-         healthGoals: allSelections, // healthGoals가 별도로 전달되는지 확인
-         signupStep: 'survey_completed',
-         updatedAt: new Date().toISOString(),
-      });
-
-      setIsSubmitting(false);
-      
-      // 계정 생성 페이지로 이동
-      console.log('계정 생성 페이지로 이동 시작...');
-      router.push('/signup-v2/account');
+      // Firestore에 데이터 저장
+      try {
+        await updateDoc(doc(db, 'users', tempUserId), {
+          healthGoals: allSelections,
+          signupStep: 'survey_completed',
+          updatedAt: serverTimestamp()
+        })
+        
+        console.log('설문 완료, 모든 데이터 저장됨');
+        
+        // 회원가입 진행 중 쿠키 갱신
+        document.cookie = 'signup_in_progress=true; path=/; max-age=10800; SameSite=Lax';
+        
+        // 로컬 스토리지에도 업데이트
+        localStorage.setItem('healthGoals', JSON.stringify(allSelections))
+        
+        // 계정 생성 페이지로 이동 - 지연 추가
+        console.log('계정 생성 페이지로 이동 준비');
+        setIsSubmitting(false);
+        setTimeout(() => {
+          router.push('/signup-v2/account')
+        }, 1000); // 1초 지연
+      } catch (error) {
+        console.error('데이터 저장 오류:', error)
+        setError('데이터를 저장하는 중 오류가 발생했습니다.')
+        setIsSubmitting(false)
+      }
     } catch (error) {
       console.error('데이터 제출 중 오류:', error);
       setError('데이터를 저장하는 중 오류가 발생했습니다.');

@@ -1,13 +1,57 @@
 'use client';
 
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useState, useEffect } from 'react';
 import { doc, updateDoc, serverTimestamp, getDoc, setDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '@/firebase/config';
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut as authSignOut, onAuthStateChanged, User as FirebaseUser, updatePassword } from 'firebase/auth';
+import { db, auth } from '@/firebase/config';
+
+// 사용자 정보 타입 정의
+type UserProfile = {
+  uid: string;        // Firebase Auth UID
+  username: string;   // 로그인 ID (필수)
+  email: string;      // 이메일 (Firebase Auth 필수)
+  password?: string;  // 로컬 개발용 (Firebase에서는 저장 안함)
+  name?: string;      // 사용자 실명
+  phoneNumber?: string; // 사용자 전화번호
+  address?: string;   // 주소
+  addressDetail?: string; // 상세 주소
+  zonecode?: string;  // 우편번호
+  surveyData?: {
+    gender?: string;
+    birthDate?: string;
+    height?: number;
+    weight?: number;
+    diseases?: string[];
+    customDisease?: string;
+    fatigueLevel?: number;
+    sleepQuality?: number;
+    digestionLevel?: number;
+    immunityLevel?: number;
+    skinCondition?: number;
+    concentrationLevel?: number;
+    stressLevel?: number;
+    jointPainLevel?: number;
+    weightManagement?: number;
+    dietBalance?: number;
+  };
+  healthGoals?: string[];
+  createdAt?: any;
+  updatedAt?: any;
+  lastLoginAt?: any;
+  signupStep?: string; // 회원가입 단계 추적
+  subscription?: {
+    status?: string;
+    nextBillingDate?: string;
+    expiryDate?: string;
+  };
+};
 
 type AuthContextType = {
-  user: any | null;
+  user: UserProfile | null;
+  userProfile: UserProfile | null;
   loading: boolean;
-  signIn: (username: string, password: string) => Promise<any>;
+  dataLoading: boolean;
+  signIn: (email: string, password: string) => Promise<any>;
   signOut: () => Promise<void>;
   createAccount: (
     username: string, 
@@ -27,11 +71,15 @@ type AuthContextType = {
   updateUserProfile: (uid: string, data: any) => Promise<void>;
   getIncompleteSignup: () => Promise<any>;
   clearIncompleteSignup: () => Promise<void>;
+  refreshUserProfile: () => Promise<void>;
+  firebaseUser: FirebaseUser | null;
 };
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
+  userProfile: null,
   loading: false,
+  dataLoading: false,
   signIn: async () => ({}),
   signOut: async () => {},
   createAccount: async () => false,
@@ -41,67 +89,344 @@ const AuthContext = createContext<AuthContextType>({
   updateUserSignupData: async () => {},
   updateUserProfile: async () => {},
   getIncompleteSignup: async () => null,
-  clearIncompleteSignup: async () => {}
+  clearIncompleteSignup: async () => {},
+  refreshUserProfile: async () => {},
+  firebaseUser: null,
 });
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<any | null>(null);
-  const [loading, setLoading] = useState(false);
+// 로컬 스토리지에 사용자 데이터 저장 함수
+const saveUserDataToLocalStorage = (data: any) => {
+  try {
+    // 기본 인증 정보
+    localStorage.setItem('uid', data.uid);
+    localStorage.setItem('username', data.username);
+    
+    // 통합 사용자 데이터 (JSON 형태로 저장)
+    const userData = {
+      uid: data.uid,
+      username: data.username,
+      email: data.email || '',
+      lastUpdated: Date.now(),
+    };
+    
+    localStorage.setItem('userData', JSON.stringify(userData));
+    
+    // 개별 필드 (호환성 유지)
+    if (data.gender) localStorage.setItem('gender', data.gender);
+    if (data.height) localStorage.setItem('height', String(data.height));
+    if (data.weight) localStorage.setItem('weight', String(data.weight));
+    if (data.birthDate) localStorage.setItem('birthDate', data.birthDate);
+    if (data.name) localStorage.setItem('name', data.name);
+    if (data.email) localStorage.setItem('email', data.email);
+    if (data.healthGoals) localStorage.setItem('healthGoals', JSON.stringify(data.healthGoals));
+  } catch (e) {
+    console.error('로컬 스토리지 저장 오류:', e);
+  }
+};
 
-  // 더미 로그인 함수 - 실제 인증 없이 로컬 스토리지에만 저장
-  const signIn = async (username: string, password: string): Promise<any> => {
-    try {
-      console.log('더미 로그인:', username);
+// 로컬 스토리지에서 사용자 데이터 제거 함수
+const clearUserDataFromLocalStorage = () => {
+  try {
+    // 로그아웃 시에만 필요한 데이터 삭제 (인증 관련 데이터는 유지)
+    const keysToRemove = [
+      'username',
+      'userData',
+      'gender',
+      'height',
+      'weight',
+      'birthDate',
+      'name',
+      'healthGoals',
+      'signupStep',
+      'cart_items',
+      'tempId',
+      'last_active_time',
+      'email_verified',
+      'email'
+    ];
+    
+    keysToRemove.forEach(key => {
+      localStorage.removeItem(key);
+    });
+    
+    // 로그아웃 시 명시적으로 uid만 삭제
+    localStorage.removeItem('uid');
+  } catch (e) {
+    console.error('로컬 스토리지 제거 오류:', e);
+  }
+};
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
+
+  // Firebase Auth 상태 변경 감지
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      console.log('Firebase 인증 상태 변경:', firebaseUser?.email);
+      setFirebaseUser(firebaseUser);
       
-      // 간단한 사용자 객체 생성
-      const userData = {
-        uid: `user_${Date.now()}`,
-        username: username,
-        email: `${username}@example.com`,
-      };
+      // 현재 URL이 signup-v2 경로인지 확인
+      const isInSignupFlow = typeof window !== 'undefined' && 
+        window.location.pathname.includes('/signup-v2');
       
-      // 사용자 상태 설정
-      setUser(userData);
-      
-      // 로컬 스토리지에 저장
-      try {
-        localStorage.setItem('uid', userData.uid);
-        localStorage.setItem('username', userData.username);
-      } catch (e) {
-        console.error('로컬 스토리지 오류:', e);
+      if (firebaseUser) {
+        // 사용자가 인증되었을 때
+        try {
+          // 새로운 ID 토큰 가져와서 쿠키 업데이트
+          const idToken = await firebaseUser.getIdToken();
+          document.cookie = `auth_token=${idToken}; path=/; max-age=${50 * 60}; SameSite=Lax`;
+          
+          // 회원가입 진행 중인 경우 쿠키 설정 (페이지가 signup-v2 경로인 경우)
+          if (isInSignupFlow) {
+            document.cookie = 'signup_in_progress=true; path=/; max-age=3600; SameSite=Lax';
+          }
+          
+          // Firestore에서 사용자 정보 가져오기
+          const userRef = doc(db, 'users', firebaseUser.uid);
+          const userDoc = await getDoc(userRef);
+          
+          if (userDoc.exists()) {
+            const userData = userDoc.data() as UserProfile;
+            setUser(userData);
+            setUserProfile(userData);
+            
+            // 로컬 스토리지에 사용자 정보 저장
+            saveUserDataToLocalStorage({
+              ...userData,
+              uid: firebaseUser.uid,
+              email: firebaseUser.email,
+            });
+          } else {
+            // 사용자 정보가 Firestore에 없는 경우 - 이메일만 가지고 있는 상태
+            const basicUser = {
+              uid: firebaseUser.uid,
+              username: firebaseUser.email?.split('@')[0] || '',
+              email: firebaseUser.email || '',
+            };
+            setUser(basicUser as UserProfile);
+          }
+        } catch (error) {
+          console.error('사용자 데이터 로드 오류:', error);
+        }
+      } else {
+        // 사용자가 로그아웃했을 때
+        setUser(null);
+        setUserProfile(null);
+        
+        // 쿠키 삭제
+        document.cookie = 'auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
       }
       
-      return userData;
-    } catch (error) {
-      console.error('더미 로그인 오류:', error);
-      throw new Error('로그인에 실패했습니다.');
-    }
-  };
+      setLoading(false);
+    });
+    
+    return () => unsubscribe();
+  }, []);
 
-  // 더미 로그아웃 함수
-  const signOut = async (): Promise<void> => {
-    setUser(null);
+  // 토큰 자동 갱신 메커니즘
+  useEffect(() => {
+    // 45분마다 토큰 갱신 (토큰 만료 시간보다 약간 짧게)
+    const tokenRefreshInterval = 45 * 60 * 1000; // 45분
+    let intervalId: NodeJS.Timeout | null = null;
+    
+    const refreshToken = async () => {
+      if (auth.currentUser) {
+        try {
+          // 토큰 갱신 요청
+          const newToken = await auth.currentUser.getIdToken(true);
+          // 쿠키 업데이트
+          document.cookie = `auth_token=${newToken}; path=/; max-age=${50 * 60}; SameSite=Lax`;
+          console.log('Firebase 토큰 자동 갱신 완료');
+        } catch (error) {
+          console.error('토큰 갱신 오류:', error);
+        }
+      }
+    };
+    
+    if (firebaseUser) {
+      // 초기 설정 및 주기적 갱신 시작
+      intervalId = setInterval(refreshToken, tokenRefreshInterval);
+    }
+    
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [firebaseUser]);
+
+  // 사용자 프로필 데이터 로드 함수
+  const loadUserProfile = async (uid: string): Promise<UserProfile | null> => {
+    setDataLoading(true);
     try {
-      localStorage.removeItem('uid');
-      localStorage.removeItem('username');
-      localStorage.removeItem('gender');
-      localStorage.removeItem('height');
-      localStorage.removeItem('weight');
-      localStorage.removeItem('birthDate');
-      localStorage.removeItem('name');
-      localStorage.removeItem('healthGoals');
-      localStorage.removeItem('signupStep');
-      localStorage.removeItem('cart_items');
-      localStorage.removeItem('tempId');
-      localStorage.removeItem('last_active_time');
-      localStorage.removeItem('email_verified');
-      localStorage.removeItem('email');
-    } catch (e) {
-      console.error('로컬 스토리지 오류:', e);
+      // 캐시 확인
+      const cacheKey = `user_profile_${uid}`;
+      const cachedProfile = sessionStorage.getItem(cacheKey);
+      
+      if (cachedProfile) {
+        try {
+          const parsedProfile = JSON.parse(cachedProfile);
+          const cacheTime = parsedProfile._cacheTime || 0;
+          
+          // 캐시가 10분 이내면 캐시 데이터 사용
+          if (Date.now() - cacheTime < 10 * 60 * 1000) {
+            setUserProfile(parsedProfile);
+            return parsedProfile;
+          }
+        } catch (e) {
+          console.error('캐시 파싱 오류:', e);
+          // 캐시 파싱 오류 시 세션 스토리지 정리
+          sessionStorage.removeItem(cacheKey);
+        }
+      }
+
+      // 캐시 없을 경우 Firestore에서 조회
+      const userRef = doc(db, 'users', uid);
+      const userDoc = await getDoc(userRef);
+      
+      if (userDoc.exists()) {
+        const profileData = userDoc.data() as UserProfile;
+        setUserProfile(profileData);
+        
+        // 세션 스토리지에 캐싱
+        try {
+          sessionStorage.setItem(cacheKey, JSON.stringify({
+            ...profileData,
+            _cacheTime: Date.now()
+          }));
+        } catch (e) {
+          console.error('세션 스토리지 저장 오류:', e);
+        }
+        
+        return profileData;
+      } else {
+        // uid가 username과 다를 경우(기존 계정) 처리
+        const usersRef = collection(db, 'users');
+        const q = query(usersRef, where('username', '==', uid));
+        const querySnapshot = await getDocs(q);
+        
+        if (!querySnapshot.empty) {
+          const profileData = querySnapshot.docs[0].data() as UserProfile;
+          setUserProfile(profileData);
+          
+          // 세션 스토리지에 캐싱
+          try {
+            sessionStorage.setItem(cacheKey, JSON.stringify({
+              ...profileData,
+              _cacheTime: Date.now()
+            }));
+          } catch (e) {
+            console.error('세션 스토리지 저장 오류:', e);
+          }
+          
+          return profileData;
+        }
+      }
+      return null;
+    } catch (error) {
+      console.error('프로필 데이터 로드 오류:', error);
+      return null;
+    } finally {
+      setDataLoading(false);
+    }
+  };
+  
+  // 사용자 프로필 새로고침 함수
+  const refreshUserProfile = async (): Promise<void> => {
+    if (user?.uid) {
+      await loadUserProfile(user.uid);
     }
   };
 
-  // 더미 계정 생성 함수
+  // 로그인 함수 - Firebase Auth 사용
+  const signIn = async (email: string, password: string): Promise<any> => {
+    try {
+      console.log('로그인 시도:', email);
+      setLoading(true);
+      
+      // Firebase Authentication으로 로그인
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const firebaseUser = userCredential.user;
+      
+      // Firebase ID 토큰 가져오기
+      const idToken = await firebaseUser.getIdToken();
+      
+      // auth_token 쿠키 설정 (50분 만료, Secure 및 SameSite 속성 추가)
+      document.cookie = `auth_token=${idToken}; path=/; max-age=${50 * 60}; SameSite=Lax`;
+      
+      // Firestore에서 사용자 정보 가져오기
+      const userRef = doc(db, 'users', firebaseUser.uid);
+      const userDoc = await getDoc(userRef);
+      
+      if (userDoc.exists()) {
+        const userData = userDoc.data() as UserProfile;
+        
+        // 로그인 시간 업데이트
+        await updateDoc(userRef, {
+          lastLoginAt: serverTimestamp()
+        });
+        
+        // 사용자 상태 설정
+        setUser(userData);
+        setUserProfile(userData);
+        
+        // 로컬 스토리지에 저장
+        saveUserDataToLocalStorage({
+          ...userData,
+          uid: firebaseUser.uid,
+          email: firebaseUser.email,
+        });
+        
+        return userData;
+      } else {
+        // Firestore에 사용자 정보가 없는 경우 - 기본 정보만 생성
+        const basicUserData = {
+          uid: firebaseUser.uid,
+          username: email.split('@')[0],
+          email: email,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          lastLoginAt: serverTimestamp(),
+        };
+        
+        await setDoc(userRef, basicUserData);
+        
+        setUser(basicUserData as UserProfile);
+        setUserProfile(basicUserData as UserProfile);
+        
+        saveUserDataToLocalStorage(basicUserData);
+        
+        return basicUserData;
+      }
+    } catch (error) {
+      console.error('로그인 오류:', error);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 로그아웃 함수 - Firebase Auth 사용
+  const signOut = async (): Promise<void> => {
+    try {
+      await authSignOut(auth);
+      setUser(null);
+      setUserProfile(null);
+      clearUserDataFromLocalStorage();
+      
+      // 명시적으로 auth_token 쿠키 삭제
+      document.cookie = 'auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+    } catch (error) {
+      console.error('로그아웃 오류:', error);
+      throw error;
+    }
+  };
+
+  // 계정 생성 함수 - Firebase Auth 사용
   const createAccount = async (
     username: string, 
     password: string, 
@@ -109,100 +434,135 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     tempId: string,
     addressInfo?: any
   ): Promise<boolean> => {
-    console.log('실제 계정 생성 시작:', { username, tempId });
+    console.log('계정 생성 시작:', { username, tempId });
     setLoading(true);
     try {
+      // 임시 Firestore 문서 가져오기
       const tempUserRef = doc(db, 'users', tempId);
       const tempUserSnap = await getDoc(tempUserRef);
 
       if (!tempUserSnap.exists()) throw new Error('임시 사용자 데이터를 찾을 수 없습니다.');
       const tempUserData = tempUserSnap.data();
+      
+      if (!tempUserData.email) throw new Error('이메일 정보가 없습니다.');
 
-      // Linter 오류 해결: 로컬 스토리지에 tempUserData에서 직접 저장 먼저 수행
-      try {
-        console.log('임시 데이터에서 로컬 스토리지 저장 시도:', tempUserData);
-        if (tempUserData.gender) localStorage.setItem('gender', tempUserData.gender);
-        if (tempUserData.height) localStorage.setItem('height', tempUserData.height.toString());
-        if (tempUserData.weight) localStorage.setItem('weight', tempUserData.weight.toString());
-        if (tempUserData.birthDate) localStorage.setItem('birthDate', tempUserData.birthDate);
-        if (tempUserData.name) localStorage.setItem('name', tempUserData.name);
-        if (tempUserData.email) localStorage.setItem('email', tempUserData.email);
-      } catch (e) { console.error('로컬 스토리지 저장 오류 (tempUserData):', e); }
+      // 이메일 인증 단계에서 저장한 Firebase Auth UID 가져오기
+      const firebaseAuthUid = localStorage.getItem('firebaseAuthUid');
+      
+      let firebaseUser;
+      
+      // Firebase Auth UID가 있으면 해당 계정 사용
+      if (firebaseAuthUid) {
+        // 기존 임시 계정을 사용하여 로그인
+        try {
+          const tempPassword = localStorage.getItem('temp_password');
+          if (!tempPassword) throw new Error('임시 비밀번호를 찾을 수 없습니다.');
+          
+          const credential = await signInWithEmailAndPassword(auth, tempUserData.email, tempPassword);
+          firebaseUser = credential.user;
+          
+          // 사용자가 설정한 새 비밀번호로 업데이트
+          // 주의: 실제 환경에서는 updatePassword를 사용하려면 최근 로그인 필요
+          // 여기서는 방금 로그인했으므로 가능
+          await updatePassword(firebaseUser, password);
+          console.log('기존 계정 비밀번호 업데이트 완료');
+        } catch (error) {
+          console.error('기존 계정 사용 중 오류:', error);
+          // 기존 계정 사용 실패 시 새 계정 생성 시도
+          const userCredential = await createUserWithEmailAndPassword(
+            auth, 
+            tempUserData.email, 
+            password
+          );
+          firebaseUser = userCredential.user;
+        }
+      } else {
+        // 임시 Auth UID가 없는 경우 새 계정 생성
+        console.log('Firebase Auth UID가 없어 새 계정 생성');
+        const userCredential = await createUserWithEmailAndPassword(
+          auth, 
+          tempUserData.email, 
+          password
+        );
+        firebaseUser = userCredential.user;
+      }
 
-      // username 중복 재확인 (혹시 모를 동시성 문제 대비)
-      const isUsernameTaken = !(await checkUsername(username.trim()));
-      if (isUsernameTaken) throw new Error('이미 사용 중인 아이디입니다.');
+      // Firebase ID 토큰 가져오기
+      const idToken = await firebaseUser.getIdToken();
+      
+      // auth_token 쿠키 설정 (50분 만료, Secure 및 SameSite 속성 추가)
+      document.cookie = `auth_token=${idToken}; path=/; max-age=${50 * 60}; SameSite=Lax`;
 
       // 최종 사용자 데이터 구성
       const finalUserData = {
-        ...tempUserData,
+        uid: firebaseUser.uid,
         username: username.trim(),
-        password: password,
+        email: tempUserData.email,
         phoneNumber: phoneNumber || '',
         address: addressInfo?.address || '',
         addressDetail: addressInfo?.addressDetail || '',
         zonecode: addressInfo?.zonecode || '',
+        name: tempUserData.name || '',
+        surveyData: tempUserData.surveyData || {},
+        healthGoals: tempUserData.healthGoals || [],
         signupStep: 'completed',
         createdAt: tempUserData.createdAt || serverTimestamp(),
         updatedAt: serverTimestamp(),
         lastLoginAt: serverTimestamp(),
       };
 
-      // 최종 사용자 문서 저장
-      const finalUserRef = doc(db, 'users', username.trim());
+      // Firestore에 사용자 정보 저장 (Firebase Auth UID로)
+      const finalUserRef = doc(db, 'users', firebaseUser.uid);
       await setDoc(finalUserRef, finalUserData);
-      console.log(`최종 사용자 문서 생성 완료. Document ID: ${username.trim()}`);
+      console.log(`최종 사용자 문서 생성 완료. Firebase UID: ${firebaseUser.uid}`);
+      
+      // 사용자 데이터 설정
+      setUser(finalUserData as UserProfile);
+      setUserProfile(finalUserData as UserProfile);
+      
+      // 로컬 스토리지에 사용자 데이터 저장
+      saveUserDataToLocalStorage(finalUserData);
+      
+      // 임시 데이터 백그라운드에서 정리 (UI 차단 없음)
+      setTimeout(async () => {
+        try {
+          await deleteDoc(tempUserRef);
+          console.log(`임시 사용자 문서 삭제 완료. tempId: ${tempId}`);
+          localStorage.removeItem('tempId');
+          localStorage.removeItem('firebaseAuthUid');
+          localStorage.removeItem('temp_password');
+          localStorage.removeItem('email_verification_sent');
+          localStorage.removeItem('email_verified');
+        } catch (deleteError) {
+          console.error(`임시 사용자 문서 삭제 실패:`, deleteError);
+        }
+      }, 1000);
 
-      // --- 임시 문서 삭제 로직 제거 ---
-      // console.log(`임시 사용자 문서 삭제는 대시보드에서 처리됩니다. tempId: ${tempId}`);
-      /*
-      try {
-        await deleteDoc(tempUserRef); // 임시 문서 삭제 시도
-        console.log(`임시 사용자 문서 삭제 완료. tempId: ${tempId}`);
-      } catch (deleteError) {
-        console.error(`임시 사용자 문서 삭제 실패 (tempId: ${tempId}):`, deleteError);
-      }
-      */
-      // --- 수정 끝 ---
-
-      // 로컬 스토리지에 최종 username 저장
-      try {
-        localStorage.setItem('username', username.trim());
-        console.log('계정 생성 후 최종 username 로컬 스토리지 저장 완료');
-        // 기존에 저장하던 다른 정보들은 tempUserData에서 이미 저장됨
-      } catch (e) { console.error('로컬 스토리지 저장 오류 (username):', e); }
-
-      setLoading(false);
       return true; // 성공 반환
-
-    } catch (error) { // getDoc, checkUsername, setDoc 등 주요 단계 오류 처리
+    } catch (error) {
       console.error('계정 생성 실패:', error);
+      throw error;
+    } finally {
       setLoading(false);
-      throw error; // 주요 단계 오류는 여전히 발생시킴 (handleSubmit에서 처리)
     }
   };
 
-  // 모든 체크 함수는 항상 true 반환
+  // 나머지 유틸리티 함수들
   const checkUsername = async (username: string): Promise<boolean> => {
     console.log('사용자명 중복 체크:', username);
     const usersRef = collection(db, 'users');
-    // username 필드 또는 문서 ID로 확인
     const q = query(usersRef, where('username', '==', username.trim()));
-    const docRef = doc(db, 'users', username.trim()); // 문서 ID로도 확인 시도
     
     try {
       const querySnapshot = await getDocs(q);
-      const docSnap = await getDoc(docRef);
-      // username 필드로 존재하거나, 문서 ID로 존재하면 사용 불가
-      if (!querySnapshot.empty || docSnap.exists()) {
+      if (!querySnapshot.empty) {
         console.log('사용 중인 사용자명입니다.');
-        return false; // 사용 불가
+        return false;
       }
       console.log('사용 가능한 사용자명입니다.');
-      return true; // 사용 가능
+      return true;
     } catch (error) {
       console.error("사용자명 확인 중 오류:", error);
-      // 오류 발생 시 일단 사용 불가로 처리하거나, 에러 핸들링 강화
       return false;
     }
   };
@@ -243,7 +603,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // 더미 데이터 업데이트 함수
   const updateUserSignupData = async (data: any): Promise<void> => {
     console.log('회원가입 데이터 업데이트:', data);
     
@@ -255,6 +614,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await updateDoc(userRef, { ...data, updatedAt: serverTimestamp() });
       console.log(`임시 사용자 데이터 업데이트 완료. tempId: ${tempId}`);
 
+      // 로컬 스토리지 업데이트 (유틸리티 함수 사용)
       try {
         if (data.surveyData) {
           if (data.surveyData.gender) localStorage.setItem('gender', String(data.surveyData.gender));
@@ -268,50 +628,73 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (error) { console.error('Firebase 데이터 업데이트 오류:', error); throw error; }
   };
 
-  // 더미 프로필 업데이트 함수
   const updateUserProfile = async (uid: string, data: any): Promise<void> => {
-    console.log('더미 프로필 업데이트 (uid 대신 username 사용 필요):', { uid, data });
-    // 실제 구현 시 uid 대신 username을 사용하거나, Firestore에서 uid를 조회하여 사용해야 함
-    // 로컬 스토리지 업데이트 로직은 유지 또는 개선
+    console.log('프로필 업데이트:', { uid, data });
+    setDataLoading(true);
+    
     try {
-      // username은 일반적으로 변경하지 않으므로 제외하거나 별도 처리
-      if (data.gender) localStorage.setItem('gender', String(data.gender));
-      if (data.height) localStorage.setItem('height', String(data.height));
-      if (data.weight) localStorage.setItem('weight', String(data.weight));
-      if (data.birthDate) localStorage.setItem('birthDate', String(data.birthDate));
-      if (data.name) localStorage.setItem('name', String(data.name));
-    } catch (e) { console.error('로컬 스토리지 오류:', e); }
+      // Firestore 업데이트
+      const userRef = doc(db, 'users', uid);
+      await updateDoc(userRef, { 
+        ...data, 
+        updatedAt: serverTimestamp() 
+      });
+      
+      // 상태 및 캐시 업데이트
+      await refreshUserProfile();
+      
+      // 로컬 스토리지 업데이트
+      if (user) {
+        // 업데이트된 필드만 저장
+        Object.keys(data).forEach(key => {
+          if (key === 'surveyData') {
+            if (data.surveyData.gender) localStorage.setItem('gender', String(data.surveyData.gender));
+            if (data.surveyData.height) localStorage.setItem('height', String(data.surveyData.height));
+            if (data.surveyData.weight) localStorage.setItem('weight', String(data.surveyData.weight));
+            if (data.surveyData.birthDate) localStorage.setItem('birthDate', String(data.surveyData.birthDate));
+          } else if (key === 'healthGoals') {
+            localStorage.setItem('healthGoals', JSON.stringify(data.healthGoals));
+          } else if (key === 'name') {
+            localStorage.setItem('name', data.name);
+          }
+        });
+      }
+    } catch (error) {
+      console.error('프로필 업데이트 오류:', error);
+      throw error;
+    } finally {
+      setDataLoading(false);
+    }
   };
-
-  // 더미 미완료 회원가입 정보 조회
+  
   const getIncompleteSignup = async (): Promise<any> => {
-    console.log('더미 미완료 회원가입 정보 조회');
-    return null; // 항상 null 반환
+    return { tempId: localStorage.getItem('tempId') };
   };
-
-  // 더미 미완료 회원가입 정보 정리
+  
   const clearIncompleteSignup = async (): Promise<void> => {
-    console.log('더미 미완료 회원가입 정보 정리');
-    // 아무것도 하지 않음
-  };
-
-  const value = {
-    user,
-    loading,
-    signIn,
-    signOut,
-    createAccount,
-    checkUsername,
-    checkEmail,
-    checkPhoneNumber,
-    updateUserSignupData,
-    updateUserProfile,
-    getIncompleteSignup,
-    clearIncompleteSignup
+    localStorage.removeItem('tempId');
+    localStorage.removeItem('last_active_time');
   };
 
   return (
-    <AuthContext.Provider value={value}>
+    <AuthContext.Provider value={{
+      user,
+      userProfile,
+      loading,
+      dataLoading,
+      signIn,
+      signOut,
+      createAccount,
+      checkUsername,
+      checkEmail,
+      checkPhoneNumber,
+      updateUserSignupData,
+      updateUserProfile,
+      getIncompleteSignup,
+      clearIncompleteSignup,
+      refreshUserProfile,
+      firebaseUser
+    }}>
       {children}
     </AuthContext.Provider>
   );

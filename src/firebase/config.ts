@@ -4,6 +4,7 @@ import { initializeApp, getApps } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { getAnalytics, Analytics } from 'firebase/analytics';
+import { getFunctions } from 'firebase/functions';
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -20,6 +21,7 @@ const firebaseConfig = {
 let app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 const db = getFirestore(app);
 const auth = getAuth(app);
+const functions = getFunctions(app);
 
 // Initialize Analytics only on client side
 let analytics: Analytics | null = null;
@@ -27,4 +29,4 @@ if (typeof window !== 'undefined') {
   analytics = getAnalytics(app);
 }
 
-export { db, auth, analytics }; 
+export { db, auth, analytics, functions }; 

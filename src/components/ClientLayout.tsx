@@ -1,10 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { usePathname } from 'next/navigation'
 import Cart from './Cart'
 import { Product } from '@/lib/products'
 import { useRouter } from 'next/navigation'
+import { motion, AnimatePresence } from 'framer-motion'
+import { useApp } from '@/context/app-context'
+import PageTransition from './ui/PageTransition'
 
 // 추천 제품 정보 인터페이스 개선
 interface CartItem {
@@ -38,6 +41,8 @@ export default function ClientLayout({
   const [isCartOpen, setIsCartOpen] = useState(false)
   const [cartItems, setCartItems] = useState<CartItem[]>([])
   const router = useRouter()
+  const { pageTransition, isOnline, addNotification } = useApp()
+  const prevOnlineStateRef = useRef(isOnline)
 
   // 제외할 페이지 목록 (최상위 경로)
   const excludedTopLevelPaths = [
@@ -181,9 +186,49 @@ export default function ClientLayout({
     });
   };
 
+  // 네트워크 상태를 감지하는 함수를 메모이제이션
+  const handleNetworkChange = useCallback(() => {
+    // 이전 상태와 현재 상태가 다를 때만 알림 생성
+    if (prevOnlineStateRef.current !== isOnline) {
+      if (!isOnline) {
+        addNotification({
+          type: 'warning',
+          message: '인터넷 연결이 끊겼습니다. 일부 기능이 제한될 수 있습니다.',
+          autoDismiss: false,
+        });
+      } else if (prevOnlineStateRef.current === false) { // 이전에 오프라인이었을 때만 복구 메시지 표시
+        addNotification({
+          type: 'success',
+          message: '인터넷 연결이 복구되었습니다.',
+          autoDismiss: true,
+          dismissAfter: 3000,
+        });
+      }
+      
+      // 상태 업데이트
+      prevOnlineStateRef.current = isOnline;
+    }
+  }, [isOnline, addNotification]);
+  
+  // 초기 렌더링 시 한 번만 실행되는 useEffect
+  useEffect(() => {
+    // 컴포넌트 마운트 시 초기 네트워크 상태 저장
+    prevOnlineStateRef.current = isOnline;
+  }, []);
+  
+  // 네트워크 상태 변경 감지 useEffect
+  useEffect(() => {
+    // 상태 변경 감지 및 처리
+    handleNetworkChange();
+  }, [handleNetworkChange]);
+
   return (
     <>
-      {children}
+      <AnimatePresence mode="wait">
+        <PageTransition key={pathname} animation={pageTransition}>
+          {children}
+        </PageTransition>
+      </AnimatePresence>
       
       {/* 제외된 페이지가 아닐 때만 건강구독함 표시 */}
       {!shouldHideCart && (

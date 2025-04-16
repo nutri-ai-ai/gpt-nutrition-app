@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 기본적으로 모든 문서에 대한 접근 거부
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // 사용자 문서 접근 규칙
+    match /users/{userId} {
+      // 인증된 사용자만 자신의 문서 읽기 가능
+      allow read: if request.auth != null && (request.auth.uid == userId || resource.data.username == request.auth.token.email);
+      
+      // 인증된 사용자만 자신의 문서 쓰기 가능
+      allow write: if request.auth != null && request.auth.uid == userId;
+      
+      // 임시 가입 단계에서는 특별한 접근 허용 (이메일 인증 단계)
+      allow create: if request.auth != null;
+    }
+    
+    // 채팅 메시지 접근 규칙
+    match /chats/{chatId} {
+      // 인증된 사용자만 채팅 문서 읽기/쓰기 가능
+      allow read, write: if request.auth != null && 
+                        (resource == null || resource.data.userId == request.auth.uid);
+    }
+    
+    // 주문 접근 규칙
+    match /orders/{orderId} {
+      // 사용자는 자신의 주문만 조회/생성 가능
+      allow read, create: if request.auth != null && 
+                        (resource == null || resource.data.userId == request.auth.uid);
+      
+      // 관리자만 주문 수정/삭제 가능 (관리자 기능 구현 시 추가)
+      allow update, delete: if false;
+    }
+  }
+} 
