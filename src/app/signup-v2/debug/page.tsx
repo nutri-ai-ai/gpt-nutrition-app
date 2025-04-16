@@ -48,6 +48,10 @@ export default function DebugPage() {
   const fetchAllUsers = async () => {
     setLoading(true)
     try {
+      if (!db) {
+        console.error('Firestore가 초기화되지 않았습니다')
+        return
+      }
       const usersRef = collection(db, 'users')
       const q = query(usersRef, limit(10))
       const querySnapshot = await getDocs(q)
@@ -71,6 +75,10 @@ export default function DebugPage() {
     
     setLoading(true)
     try {
+      if (!db) {
+        console.error('Firestore가 초기화되지 않았습니다')
+        return
+      }
       // username으로 검색
       const usersRef = collection(db, 'users')
       const usernameQuery = query(usersRef, where('username', '==', username.trim()))
