@@ -54,16 +54,17 @@ type AuthContextType = {
   signIn: (email: string, password: string) => Promise<any>;
   signOut: () => Promise<void>;
   createAccount: (
+    tempId: string,
+    email: string,
     username: string, 
     password: string, 
-    phoneNumber: string | undefined, 
-    tempId: string,
+    phoneNumber?: string, 
     addressInfo?: {
       address?: string;
       addressDetail?: string;
       zonecode?: string;
     }
-  ) => Promise<boolean>;
+  ) => Promise<{ success: boolean; error?: string }>;
   checkUsername: (username: string) => Promise<boolean>;
   checkEmail: (email: string) => Promise<boolean>;
   checkPhoneNumber: (phoneNumber: string) => Promise<boolean>;
@@ -82,7 +83,7 @@ const AuthContext = createContext<AuthContextType>({
   dataLoading: false,
   signIn: async () => ({}),
   signOut: async () => {},
-  createAccount: async () => false,
+  createAccount: async () => ({ success: false }),
   checkUsername: async () => true,
   checkEmail: async () => true,
   checkPhoneNumber: async () => true,
@@ -165,6 +166,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Firebase Auth 상태 변경 감지
   useEffect(() => {
+    if (!auth) return;
+    
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       console.log('Firebase 인증 상태 변경:', firebaseUser?.email);
       setFirebaseUser(firebaseUser);
@@ -186,28 +189,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
           
           // Firestore에서 사용자 정보 가져오기
-          const userRef = doc(db, 'users', firebaseUser.uid);
-          const userDoc = await getDoc(userRef);
-          
-          if (userDoc.exists()) {
-            const userData = userDoc.data() as UserProfile;
-            setUser(userData);
-            setUserProfile(userData);
+          if (db) {
+            const userRef = doc(db, 'users', firebaseUser.uid);
+            const userDoc = await getDoc(userRef);
             
-            // 로컬 스토리지에 사용자 정보 저장
-            saveUserDataToLocalStorage({
-              ...userData,
-              uid: firebaseUser.uid,
-              email: firebaseUser.email,
-            });
-          } else {
-            // 사용자 정보가 Firestore에 없는 경우 - 이메일만 가지고 있는 상태
-            const basicUser = {
-              uid: firebaseUser.uid,
-              username: firebaseUser.email?.split('@')[0] || '',
-              email: firebaseUser.email || '',
-            };
-            setUser(basicUser as UserProfile);
+            if (userDoc.exists()) {
+              const userData = userDoc.data() as UserProfile;
+              setUser(userData);
+              setUserProfile(userData);
+              
+              // 로컬 스토리지에 사용자 정보 저장
+              saveUserDataToLocalStorage({
+                ...userData,
+                uid: firebaseUser.uid,
+                email: firebaseUser.email,
+              });
+            } else {
+              // 사용자 정보가 Firestore에 없는 경우 - 이메일만 가지고 있는 상태
+              const basicUser = {
+                uid: firebaseUser.uid,
+                username: firebaseUser.email?.split('@')[0] || '',
+                email: firebaseUser.email || '',
+              };
+              setUser(basicUser as UserProfile);
+            }
           }
         } catch (error) {
           console.error('사용자 데이터 로드 오류:', error);
@@ -229,21 +234,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // 토큰 자동 갱신 메커니즘
   useEffect(() => {
+    if (!auth) return;
+    
     // 45분마다 토큰 갱신 (토큰 만료 시간보다 약간 짧게)
     const tokenRefreshInterval = 45 * 60 * 1000; // 45분
     let intervalId: NodeJS.Timeout | null = null;
     
     const refreshToken = async () => {
-      if (auth.currentUser) {
-        try {
-          // 토큰 갱신 요청
-          const newToken = await auth.currentUser.getIdToken(true);
-          // 쿠키 업데이트
-          document.cookie = `auth_token=${newToken}; path=/; max-age=${50 * 60}; SameSite=Lax`;
-          console.log('Firebase 토큰 자동 갱신 완료');
-        } catch (error) {
-          console.error('토큰 갱신 오류:', error);
-        }
+      if (!auth || !auth.currentUser) return;
+      
+      try {
+        // 토큰 갱신 요청
+        const newToken = await auth.currentUser.getIdToken(true);
+        // 쿠키 업데이트
+        document.cookie = `auth_token=${newToken}; path=/; max-age=${50 * 60}; SameSite=Lax`;
+        console.log('Firebase 토큰 자동 갱신 완료');
+      } catch (error) {
+        console.error('토큰 갱신 오류:', error);
       }
     };
     
@@ -261,6 +268,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // 사용자 프로필 데이터 로드 함수
   const loadUserProfile = async (uid: string): Promise<UserProfile | null> => {
+    if (!db) return null;
+    
     setDataLoading(true);
     try {
       // 캐시 확인
@@ -344,6 +353,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // 로그인 함수 - Firebase Auth 사용
   const signIn = async (email: string, password: string): Promise<any> => {
+    if (!auth || !db) {
+      throw new Error('Firebase가 초기화되지 않았습니다');
+    }
+    
     try {
       console.log('로그인 시도:', email);
       setLoading(true);
@@ -412,6 +425,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // 로그아웃 함수 - Firebase Auth 사용
   const signOut = async (): Promise<void> => {
+    if (!auth) return;
+    
     try {
       await authSignOut(auth);
       setUser(null);
@@ -428,12 +443,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // 계정 생성 함수 - Firebase Auth 사용
   const createAccount = async (
+    tempId: string,
+    email: string,
     username: string, 
     password: string, 
-    phoneNumber: string | undefined, 
-    tempId: string,
-    addressInfo?: any
-  ): Promise<boolean> => {
+    phoneNumber?: string, 
+    addressInfo?: {
+      address?: string;
+      addressDetail?: string;
+      zonecode?: string;
+    }
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!auth || !db) {
+      return { 
+        success: false, 
+        error: 'Firebase가 초기화되지 않았습니다' 
+      };
+    }
+    
     console.log('계정 생성 시작:', { username, tempId });
     setLoading(true);
     try {
@@ -458,7 +485,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const tempPassword = localStorage.getItem('temp_password');
           if (!tempPassword) throw new Error('임시 비밀번호를 찾을 수 없습니다.');
           
-          const credential = await signInWithEmailAndPassword(auth, tempUserData.email, tempPassword);
+          const credential = await signInWithEmailAndPassword(auth, email, tempPassword);
           firebaseUser = credential.user;
           
           // 사용자가 설정한 새 비밀번호로 업데이트
@@ -471,7 +498,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // 기존 계정 사용 실패 시 새 계정 생성 시도
           const userCredential = await createUserWithEmailAndPassword(
             auth, 
-            tempUserData.email, 
+            email, 
             password
           );
           firebaseUser = userCredential.user;
@@ -481,7 +508,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log('Firebase Auth UID가 없어 새 계정 생성');
         const userCredential = await createUserWithEmailAndPassword(
           auth, 
-          tempUserData.email, 
+          email, 
           password
         );
         firebaseUser = userCredential.user;
@@ -497,7 +524,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const finalUserData = {
         uid: firebaseUser.uid,
         username: username.trim(),
-        email: tempUserData.email,
+        email: email,
         phoneNumber: phoneNumber || '',
         address: addressInfo?.address || '',
         addressDetail: addressInfo?.addressDetail || '',
@@ -538,10 +565,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }, 1000);
 
-      return true; // 성공 반환
-    } catch (error) {
+      return { success: true }; // 성공 반환
+    } catch (error: any) {
       console.error('계정 생성 실패:', error);
-      throw error;
+      return { 
+        success: false, 
+        error: error?.message || '계정 생성 중 오류가 발생했습니다.' 
+      };
     } finally {
       setLoading(false);
     }
@@ -549,6 +579,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // 나머지 유틸리티 함수들
   const checkUsername = async (username: string): Promise<boolean> => {
+    if (!db) return false;
+    
     console.log('사용자명 중복 체크:', username);
     const usersRef = collection(db, 'users');
     const q = query(usersRef, where('username', '==', username.trim()));
@@ -568,6 +600,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const checkEmail = async (email: string): Promise<boolean> => {
+    if (!db) return false;
+    
     console.log('이메일 중복 체크:', email);
     const usersRef = collection(db, 'users');
     const q = query(usersRef, where('email', '==', email.trim()));
@@ -586,6 +620,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const checkPhoneNumber = async (phoneNumber: string): Promise<boolean> => {
+    if (!db) return false;
+    
     console.log('전화번호 중복 체크:', phoneNumber);
     const usersRef = collection(db, 'users');
     const q = query(usersRef, where('phoneNumber', '==', phoneNumber.trim()));
@@ -604,6 +640,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateUserSignupData = async (data: any): Promise<void> => {
+    if (!db) {
+      console.error('Firebase DB가 초기화되지 않았습니다');
+      return;
+    }
+    
     console.log('회원가입 데이터 업데이트:', data);
     
     try {
@@ -629,6 +670,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateUserProfile = async (uid: string, data: any): Promise<void> => {
+    if (!db) {
+      console.error('Firebase DB가 초기화되지 않았습니다');
+      return;
+    }
+    
     console.log('프로필 업데이트:', { uid, data });
     setDataLoading(true);
     

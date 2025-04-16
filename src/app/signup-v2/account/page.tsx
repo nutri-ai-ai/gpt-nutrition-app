@@ -250,57 +250,58 @@ export default function AccountSetupPage() {
   // 사용자 데이터 로드
   useEffect(() => {
     const checkAndLoadData = async () => {
-      setIsLoading(true);
-      const tempId = localStorage.getItem('tempId');
-      const lastActiveTime = localStorage.getItem('last_active_time');
-
-      if (!tempId || !lastActiveTime) {
-        router.push('/signup-v2/email');
-        return;
-      }
-
-      const lastActive = parseInt(lastActiveTime);
-      const now = Date.now();
-      const diffMinutes = (now - lastActive) / (1000 * 60);
-
-      if (diffMinutes > 30) {
-        localStorage.removeItem('tempId');
-        localStorage.removeItem('last_active_time');
-        router.push('/signup-v2/email');
-        return;
-      }
-
-      localStorage.setItem('last_active_time', now.toString());
-      setTempUserId(tempId);
-
       try {
-        const userRef = doc(db, 'users', tempId);
-        const userDoc = await getDoc(userRef);
-
-        if (!userDoc.exists()) {
-          setIsLoading(false);
-          setError('사용자 데이터를 찾을 수 없습니다');
-          setTimeout(() => {
-            router.push('/signup-v2/email');
-          }, 3000);
-          return;
+        setIsLoading(true)
+        
+        // Firebase가 초기화되었는지 확인
+        if (!auth || !db) {
+          console.error('Firebase 초기화가 완료되지 않았습니다')
+          setError('시스템 초기화 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.')
+          setIsLoading(false)
+          return
         }
-
-        const data = userDoc.data();
-        if (data.signupStep !== 'survey_completed') {
-          setIsLoading(false);
-          router.push('/signup-v2/survey');
-          return;
+        
+        // 로컬 스토리지에서 임시 ID 가져오기
+        const storedTempId = localStorage.getItem('tempId')
+        
+        if (storedTempId) {
+          setTempUserId(storedTempId)
+          
+          try {
+            // 사용자 데이터 조회
+            const userDoc = await getDoc(doc(db, 'users', storedTempId))
+            
+            if (userDoc.exists()) {
+              // 사용자 데이터가 존재하면 설정
+              setUserData(userDoc.data())
+              
+              // 이메일 인증이 되어 있는지 확인
+              const emailVerified = localStorage.getItem('email_verified')
+              
+              if (emailVerified !== 'true') {
+                // 이메일 인증이 되어 있지 않으면 이메일 인증 페이지로 리다이렉션
+                console.log('이메일 인증이 되어 있지 않습니다.')
+                router.push('/signup-v2/email')
+                return
+              }
+            } else {
+              console.error('사용자 문서를 찾을 수 없음')
+              router.push('/signup-v2')
+              return
+            }
+          } catch (error) {
+            console.error('사용자 데이터 로드 오류:', error)
+            setError('사용자 정보를 불러오는데 실패했습니다.')
+          }
+        } else {
+          console.log('임시 ID가 로컬 스토리지에 없습니다.')
+          router.push('/signup-v2')
+          return
         }
-
-        setUserData(data);
-        setIsLoading(false);
-      } catch (err) {
-        console.error('데이터 로드 중 오류:', err);
-        setError('데이터를 불러오는 중 오류가 발생했습니다');
-        setIsLoading(false);
+      } finally {
+        setIsLoading(false)
       }
-    };
+    }
 
     checkAndLoadData();
   }, [router]);
@@ -332,144 +333,141 @@ export default function AccountSetupPage() {
   }, [formData, phoneInputs, isPhoneAvailable, isAvailable, validatePassword]);
 
   // 회원가입 폼 제출 핸들러 최적화
-  const handleSubmit = useCallback(async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (!canSubmit || isSubmitting) {
+    
+    // 이미 제출 중인 경우 중복 요청 방지
+    if (isSubmitting) return;
+    
+    // Firebase가 초기화되었는지 확인
+    if (!auth || !db) {
+      console.error('Firebase 초기화가 완료되지 않았습니다');
+      setError('시스템 초기화 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
       return;
     }
-
+    
+    // 기본 유효성 검사
+    if (!isAvailable) {
+      setError('아이디 중복 확인을 해주세요.');
+      return;
+    }
+    
+    if (!isPhoneAvailable) {
+      setError('전화번호 중복 확인을 해주세요.');
+      return;
+    }
+    
+    const { password, confirmPassword, address, addressDetail, zonecode } = formData;
+    
+    // 비밀번호 일치 여부 확인
+    if (password !== confirmPassword) {
+      setError('비밀번호가 일치하지 않습니다.');
+      return;
+    }
+    
+    // 비밀번호 복잡성 검사
+    const { isValid, messages } = validatePassword(password);
+    if (!isValid) {
+      const invalidConditions = messages.filter(m => !m.isValid).map(m => m.text).join(', ');
+      setError(`비밀번호는 ${invalidConditions}이어야 합니다.`);
+      return;
+    }
+    
+    // 주소 입력 여부 확인
+    if (!address || !addressDetail || !zonecode) {
+      setError('주소를 모두 입력해주세요.');
+      return;
+    }
+    
+    // 제출 상태 설정
+    setIsSubmitting(true);
+    setError('');
+    
     try {
-      setIsSubmitting(true);
-      setError('');
-
-      // 폼 데이터가 비어있는지 확인
-      if (!formData.username || !formData.password || !formData.confirmPassword) {
-        setError('모든 필수 항목을 입력해주세요.');
-        setIsSubmitting(false);
-        return;
-      }
-
-      // 비밀번호 일치 확인
-      if (formData.password !== formData.confirmPassword) {
-        setError('비밀번호가 일치하지 않습니다.');
-        setIsSubmitting(false);
-        return;
-      }
-
-      // 이메일 가져오기
-      if (!userData?.email) {
-        setError('이메일 정보가 없습니다. 회원가입 과정을 다시 시작해주세요.');
-        setIsSubmitting(false);
-        return;
-      }
-      const email = userData.email;
-
-      // 임시 사용자 ID 확인
-      if (!tempUserId) {
-        setError('사용자 정보를 찾을 수 없습니다. 회원가입 과정을 다시 시작해주세요.');
-        setIsSubmitting(false);
-        return;
-      }
-
-      // Firebase Auth UID 확인 (중요)
-      const firebaseAuthUid = localStorage.getItem('firebaseAuthUid');
-      if (!firebaseAuthUid) {
-        console.warn('Firebase Auth UID가 없습니다. 이메일 인증 단계에서 문제가 있었을 수 있습니다.');
-      }
-
-      // 사용자 계정 생성
-      console.log('계정 생성 시작');
-      const user = await createAccount(
-        formData.username,
-        formData.password,
-        formData.phoneNumber,
-        tempUserId,
-        {
-          address: formData.address,
-          addressDetail: formData.addressDetail,
-          zonecode: formData.zonecode
-        }
-      );
-
-      console.log('계정 생성 결과:', !!user);
-
-      if (user) {
-        try {
-          console.log('로그인 시도');
-          await signIn(email, formData.password);
-          console.log('로그인 성공, 로컬 스토리지 정리 시작');
-          
-          try {
-            // 기존 회원가입 관련 로컬 스토리지 항목 정리
-            localStorage.removeItem('signup_name');
-            localStorage.removeItem('signupStep');
-            localStorage.removeItem('redirecting_to_intro');
-            localStorage.removeItem('intro_redirecting');
-            localStorage.removeItem('current_signup_step');
-            
-            // 사용자 ID와 이메일은 유지
-            const uid = localStorage.getItem('firebaseAuthUid') || '';
-            if (uid) {
-              localStorage.setItem('uid', uid);
-            }
-            
-            // 회원가입 진행 중 쿠키 제거 - 계정 생성 완료 신호
-            document.cookie = 'signup_in_progress=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-            
-            // 인증 토큰 설정
-            if (auth.currentUser) {
-              const idToken = await auth.currentUser.getIdToken(true);
-              document.cookie = `auth_token=${idToken}; path=/; max-age=${60 * 60}; SameSite=Lax`;
-            }
-            
-            // 대시보드로 이동 준비
-            console.log('계정 생성 완료, 대시보드로 이동 준비');
-            // Location 객체 직접 사용하여 실제 페이지 이동 (router.push가 동작하지 않을 경우 대비)
-            setTimeout(() => {
-              window.location.href = '/dashboard';
-            }, 2000); // 2초 지연으로 감소
-          } catch (cleanupError) {
-            console.error('로컬 스토리지 정리 오류:', cleanupError);
-            // 오류가 발생해도 대시보드로 이동
-            setTimeout(() => {
-              window.location.href = '/dashboard';
-            }, 2000);
+      // 저장할 사용자 정보 준비
+      const userInfo = {
+        username: formData.username,
+        password: formData.password,
+        address: formData.address,
+        addressDetail: formData.addressDetail,
+        zonecode: formData.zonecode,
+        phoneNumber: formData.phoneNumber,
+        signupCompleted: true,
+        signupStep: 'account_completed',
+        updatedAt: new Date()
+      };
+      
+      // 계정 생성 처리
+      if (tempUserId && userData?.email) {
+        // 계정 생성 함수 호출 (auth 서비스가 초기화되어 있는지 확인)
+        const result = await createAccount(
+          tempUserId,
+          userData.email,
+          userInfo.username,
+          userInfo.password,
+          userInfo.phoneNumber,
+          {
+            address: userInfo.address,
+            addressDetail: userInfo.addressDetail,
+            zonecode: userInfo.zonecode
           }
-        } catch (signInError: any) {
-          console.error('로그인 오류:', signInError);
+        );
+        
+        if (result && typeof result === 'object' && 'success' in result && result.success) {
+          console.log('계정 생성 성공, 대시보드로 이동');
           
-          // 계정은 생성되었지만 로그인에 문제가 있는 경우에도 쿠키 제거
-          document.cookie = 'signup_in_progress=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-          
-          // 로그인 오류 상세 정보 로깅 (디버깅용)
-          console.log('로그인 오류 상세:', {
-            code: signInError.code, 
-            message: signInError.message,
-            email: email
-          });
-          
-          // 대시보드로 이동 - 지연 시간 감소
-          console.log('로그인 오류 발생, 대시보드로 강제 이동');
-          setTimeout(() => {
-            window.location.href = '/dashboard';
-          }, 2000); // 2초 지연으로 감소
+          // 성공 시 다시 로그인하여 토큰 갱신
+          try {
+            // 잠시 대기 후 로그인 시도 (계정 생성 처리 시간 고려)
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            const { user } = await signIn(userData.email, userInfo.password);
+            
+            if (user) {
+              // 로그인 성공 시 토큰 갱신 및 쿠키 설정
+              const idToken = await user.getIdToken(true);
+              document.cookie = `auth_token=${idToken}; path=/; max-age=${50 * 60}; SameSite=Lax`;
+              
+              // signup_in_progress 쿠키 제거 (회원가입 완료)
+              document.cookie = 'signup_in_progress=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';
+              
+              // 세션 정보 정리
+              localStorage.removeItem('tempId');
+              localStorage.removeItem('email_verified');
+              localStorage.removeItem('email_verification_sent');
+              localStorage.removeItem('email');
+              localStorage.removeItem('temp_password');
+              localStorage.removeItem('last_active_time');
+              
+              // 대시보드로 이동
+              router.push('/dashboard');
+            } else {
+              // 로그인은 실패했지만 계정은 생성됨
+              console.log('계정은 생성되었으나 자동 로그인 실패');
+              router.push('/login?message=계정이 성공적으로 생성되었습니다. 로그인해주세요.');
+            }
+          } catch (loginError) {
+            console.error('자동 로그인 실패:', loginError);
+            router.push('/login?message=계정이 성공적으로 생성되었습니다. 로그인해주세요.');
+          }
+        } else {
+          // 계정 생성 실패 처리
+          const errorMessage = result && typeof result === 'object' && 'error' in result 
+            ? (result.error || '계정 생성에 실패했습니다.') 
+            : '계정 생성에 실패했습니다.';
+          setError(errorMessage);
+          setIsSubmitting(false);
         }
-        return;
       } else {
-        setError('계정 생성에 실패했습니다.');
+        setError('필요한 회원 정보가 없습니다. 처음부터 다시 시도해주세요.');
+        router.push('/signup-v2');
       }
-    } catch (err: any) {
-      console.error('회원가입 오류:', err);
-      if (err.code === 'auth/email-already-in-use') {
-        setError('이미 사용 중인 이메일입니다. 로그인을 시도해보세요.');
-      } else {
-        setError(err.message || '알 수 없는 오류 발생');
-      }
-    } finally {
+    } catch (error: any) {
+      console.error('회원가입 오류:', error);
+      setError(`회원가입 처리 중 오류가 발생했습니다: ${error.message || '알 수 없는 오류'}`);
       setIsSubmitting(false);
     }
-  }, [canSubmit, isSubmitting, formData, tempUserId, userData, createAccount, signIn]);
+  };
 
   if (!tempUserId) return null;
 

@@ -31,6 +31,8 @@ const EMAIL_DOMAINS = [
 
 export default function EmailVerificationPage() {
   const router = useRouter()
+  // 컴포넌트 마운트 상태를 추적하는 ref
+  const isMountedRef = useRef(true)
   const [emailLocal, setEmailLocal] = useState('')
   const [selectedDomain, setSelectedDomain] = useState(EMAIL_DOMAINS[0])
   const [customDomain, setCustomDomain] = useState('')
@@ -50,12 +52,21 @@ export default function EmailVerificationPage() {
   const [resendEnabled, setResendEnabled] = useState(false)
   const [expiryTimeInMinutes, setExpiryTimeInMinutes] = useState(0)
   const [verificationCheckInProgress, setVerificationCheckInProgress] = useState(false)
-  const isMountedRef = useRef(true)
   const [emailSent, setEmailSent] = useState(false)
   const [showVerification, setShowVerification] = useState(false)
   const [emailSending, setEmailSending] = useState(false)
   const [email, setEmail] = useState('')
   const [emailErrorMessage, setErrorMessage] = useState('')
+  
+  useEffect(() => {
+    // 컴포넌트 마운트시 설정
+    isMountedRef.current = true
+    
+    // 클린업 함수에서 마운트 해제 처리
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
   
   // 로컬 스토리지에서 인증 상태 확인
   useEffect(() => {
@@ -90,7 +101,7 @@ export default function EmailVerificationPage() {
         document.cookie = 'signup_in_progress=true; path=/; max-age=10800; SameSite=Lax';
         
         // 2. 인증 토큰이 있으면 유지하고, 없으면 null 토큰 설정 방지
-        if (auth.currentUser) {
+        if (auth && auth.currentUser) {
           auth.currentUser.getIdToken(true).then(idToken => {
             document.cookie = `auth_token=${idToken}; path=/; max-age=${50 * 60}; SameSite=Lax`;
             // 인증 토큰 설정 후 회원가입 진행 중 쿠키 재설정
@@ -140,29 +151,41 @@ export default function EmailVerificationPage() {
   // 이메일 중복 확인
   const checkEmailExists = async (email: string): Promise<boolean> => {
     try {
+      // Firebase가 초기화되었는지 확인
+      if (!auth || !db) {
+        console.error('Firebase가 초기화되지 않았습니다');
+        return false;
+      }
+      
       // 1. Firebase Auth에서 이메일 확인
-      const signInMethods = await fetchSignInMethodsForEmail(auth, email)
+      const signInMethods = await fetchSignInMethodsForEmail(auth, email);
       if (signInMethods.length > 0) {
-        return true
+        return true;
       }
       
       // 2. Firestore에서 이메일 중복 확인
-      const usersRef = collection(db, 'users')
-      const q = query(usersRef, where('email', '==', email))
-      const querySnapshot = await getDocs(q)
+      const usersRef = collection(db, 'users');
+      const q = query(usersRef, where('email', '==', email));
+      const querySnapshot = await getDocs(q);
       
-      return !querySnapshot.empty
+      return !querySnapshot.empty;
     } catch (error) {
-      console.error('이메일 확인 오류:', error)
-      return false
+      console.error('이메일 확인 오류:', error);
+      return false;
     }
-  }
+  };
 
   // sendVerificationEmail 함수 구현
   const sendVerificationEmail = async (email: string): Promise<boolean> => {
     try {
       setEmailSending(true);
       setErrorMessage('');
+      
+      // Firebase Auth 초기화 확인
+      if (!auth) {
+        setErrorMessage('인증 시스템 초기화 오류가 발생했습니다.');
+        return false;
+      }
       
       // 이메일 형식 검사
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -192,45 +215,67 @@ export default function EmailVerificationPage() {
       // 이메일 인증 발송
       await sendEmailVerification(tempUser);
       
+      // Firestore 초기화 확인
+      if (!db) {
+        setErrorMessage('데이터베이스 초기화 오류가 발생했습니다.');
+        return false;
+      }
+      
       // Firestore에 임시 사용자 정보 저장
-      const docRef = await addDoc(collection(db, 'users'), {
+      const docRef = await setDoc(doc(collection(db, 'users'), tempUser.uid), {
         email: email,
         name: name,
         tempUid: tempUser.uid, // 임시 Firebase UID 저장
         createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        signupStep: 'email_verification_sent',
-        emailVerified: false
+        status: 'pending'
       });
       
-      // 로컬 스토리지에 세션 정보 저장
-      localStorage.setItem('tempId', docRef.id);
+      // 세션 관리용 로컬 스토리지 업데이트
+      localStorage.setItem('tempId', tempUser.uid);
       localStorage.setItem('last_active_time', Date.now().toString());
+      localStorage.setItem('email_sent_time', Date.now().toString());
       localStorage.setItem('email', email);
       localStorage.setItem('temp_password', randomPassword);
       localStorage.setItem('email_verification_sent', 'true');
-      // Firebase Auth UID도 저장
-      localStorage.setItem('firebaseAuthUid', tempUser.uid);
+      localStorage.setItem('email_verified', 'false');
       
-      // 인증 메일 발송 상태로 변경
       setVerificationSent(true);
       setCurrentEmail(email);
-      setEmailSent(true);
-      setShowVerification(true);
       
-      // 알림
-      alert('인증 메일이 발송되었습니다. 메일함을 확인해주세요.');
+      // 3분 타이머 시작
+      startCountdown(180);
+      
+      // 주기적으로 인증 상태 확인 (10초마다)
+      const intervalId = setInterval(() => {
+        if (isMountedRef.current) {
+          checkVerificationStatus();
+        } else {
+          clearInterval(intervalId); // 컴포넌트 언마운트 시 인터벌 정리
+        }
+      }, 10000);
+      
       return true;
     } catch (error: any) {
-      console.error('이메일 인증 오류:', error);
+      console.error('이메일 인증 발송 오류:', error);
+      
+      // 오류 메시지 처리
+      let errorMessage = '이메일 인증 발송 중 오류가 발생했습니다.';
       if (error.code === 'auth/email-already-in-use') {
-        setErrorMessage('이미 사용 중인 이메일입니다');
-      } else {
-        setErrorMessage('이메일 인증 중 오류가 발생했습니다: ' + error.message);
+        errorMessage = '이미 사용 중인 이메일입니다.';
+      } else if (error.code === 'auth/invalid-email') {
+        errorMessage = '유효하지 않은 이메일 형식입니다.';
+      } else if (error.code === 'auth/operation-not-allowed') {
+        errorMessage = '이메일/비밀번호 인증이 비활성화되어 있습니다.';
+      } else if (error.code === 'auth/weak-password') {
+        errorMessage = '비밀번호가 너무 약합니다.';
       }
+      
+      setErrorMessage(errorMessage);
       return false;
     } finally {
-      setEmailSending(false);
+      if (isMountedRef.current) {
+        setEmailSending(false);
+      }
     }
   };
   
@@ -272,96 +317,117 @@ export default function EmailVerificationPage() {
   
   // 이메일 인증 상태 확인
   const checkVerificationStatus = async () => {
+    if (!currentEmail || !tempPassword || verificationCheckInProgress) return;
+    
     try {
       setVerificationCheckInProgress(true);
-      console.log('[이메일] 인증 상태 확인 시작');
       
-      // 이미 리다이렉션 중인지 확인
-      if (localStorage.getItem('redirecting_to_intro') === 'true') {
-        console.log('[이메일] 이미 인트로 페이지로 리다이렉션 중');
-        return;
-      }
-      
-      const tempId = localStorage.getItem('tempId');
-      const lastActive = localStorage.getItem('last_active_time');
-      
-      if (!tempId || !lastActive) {
-        console.log('[이메일] 필수 세션 정보 없음');
+      // 만약 auth가 없다면 로그 출력하고 리턴
+      if (!auth) {
+        console.error('Firebase 인증이 초기화되지 않았습니다');
         setVerificationCheckInProgress(false);
         return;
       }
       
-      // Firestore에서 사용자 정보 확인
-      const userDoc = await getDoc(doc(db, 'users', tempId));
+      // Firebase에 로그인 시도
+      const userCredential = await signInWithEmailAndPassword(auth, currentEmail, tempPassword);
+      const user = userCredential.user;
       
-      if (!userDoc.exists()) {
-        console.log('[이메일] 사용자 문서 없음');
-        setVerificationCheckInProgress(false);
-        return;
-      }
-      
-      const userData = userDoc.data();
-      console.log('[이메일] 사용자 데이터:', { 
-        emailVerified: userData.emailVerified,
-        email: userData.email
-      });
-      
-      if (userData.emailVerified === true) {
-        console.log('[이메일] 인증 확인됨, 인트로 페이지로 리다이렉션 시작');
+      if (user) {
+        // 현재 사용자 인증 토큰 갱신
+        const token = await user.getIdToken(true);
         
-        // 리다이렉션 상태 설정 - 중복 리다이렉션 방지
-        localStorage.setItem('redirecting_to_intro', 'true');
-        
-        // 인증 관련 정보 저장
-        localStorage.setItem('email_verified', 'true');
-        localStorage.setItem('verified_email', userData.email);
-        localStorage.setItem('last_active_time', Date.now().toString());
-        localStorage.setItem('current_signup_step', 'email_verified');
-        
-        // 회원가입 진행 중임을 표시하는 쿠키 설정
+        // 인증 쿠키 설정과 회원가입 진행 쿠키 설정 순서 중요
+        document.cookie = `auth_token=${token}; path=/; max-age=${50 * 60}; SameSite=Lax`;
         document.cookie = 'signup_in_progress=true; path=/; max-age=10800; SameSite=Lax';
         
-        // Firebase 인증 토큰이 있는 경우 토큰과 함께 signup_in_progress 쿠키 재설정
-        if (auth.currentUser) {
-          try {
-            const idToken = await auth.currentUser.getIdToken(true);
-            document.cookie = `auth_token=${idToken}; path=/; max-age=${50 * 60}; SameSite=Lax`;
-            document.cookie = 'signup_in_progress=true; path=/; max-age=10800; SameSite=Lax';
-            console.log('[이메일] 인증 토큰 및 회원가입 진행 중 쿠키 설정 완료');
-          } catch (tokenError) {
-            console.error('[이메일] 토큰 설정 오류:', tokenError);
-            // 토큰 설정 실패시에도 계속 진행
+        if (user.emailVerified) {
+          // 이메일 인증 완료 상태 저장
+          localStorage.setItem('email_verified', 'true');
+          localStorage.setItem('last_active_time', Date.now().toString());
+          
+          // 컴포넌트가 마운트된 상태인지 확인
+          if (isMountedRef.current) {
+            setVerified(true);
+            
+            // 인증 완료 후 인트로 페이지로 이동 (타이머 설정)
+            const timer = setTimeout(() => {
+              if (isMountedRef.current) {
+                router.push('/signup-v2/intro');
+              }
+            }, 2000);
+            
+            // 컴포넌트 언마운트 시 타이머 정리
+            return () => clearTimeout(timer);
+          }
+        } else {
+          // 인증되지 않은 상태
+          if (isMountedRef.current) {
+            setVerified(false);
+            
+            // 이메일 토큰 만료 여부 확인
+            const lastActiveTime = localStorage.getItem('email_sent_time');
+            const remainingTimeInMinutes = calculateRemainingTime(lastActiveTime);
+            setExpiryTimeInMinutes(remainingTimeInMinutes);
+            
+            if (remainingTimeInMinutes <= 0) {
+              // 토큰이 만료된 경우
+              setResendEnabled(true);
+            } else {
+              // 토큰이 유효한 경우 타이머 시작
+              if (verificationTimer === 0) {
+                startCountdown(Math.floor(remainingTimeInMinutes * 60));
+              }
+            }
           }
         }
-        
-        // 잠시 대기 후 리다이렉션
-        setTimeout(() => {
-          // 페이지 이동
-          console.log('[이메일] 인트로 페이지로 리다이렉션 실행');
-          window.location.href = '/signup-v2/intro';
-        }, 1000);
-      } else {
-        console.log('[이메일] 이메일 미인증 상태');
-        setVerificationCheckInProgress(false);
       }
     } catch (error) {
-      console.error('[이메일] 인증 상태 확인 오류:', error);
-      setVerificationCheckInProgress(false);
+      console.error('인증 상태 확인 중 오류:', error);
+    } finally {
+      if (isMountedRef.current) {
+        setVerificationCheckInProgress(false);
+      }
     }
   };
 
   // 이메일 인증 프로세스 재시작
-  const restartVerification = () => {
-    // 로컬 스토리지 정리
-    localStorage.removeItem('email_verification_sent')
-    localStorage.removeItem('temp_password')
-    
-    // 상태 초기화
-    setVerificationSent(false)
-    setTempPassword('')
-    setCurrentEmail('')
-    setError('')
-  }
+  const restartVerification = async () => {
+    try {
+      // Firebase가 초기화되었는지 확인
+      if (!auth) {
+        console.error('Firebase 인증이 초기화되지 않았습니다');
+        setError('인증 시스템을 초기화할 수 없습니다. 나중에 다시 시도해주세요.');
+        return;
+      }
+      
+      // 기존 사용자가 로그인 되어 있으면 로그아웃
+      if (auth && auth.currentUser) {
+        await signOut(auth);
+      }
+      
+      // 로컬 스토리지에서 사용자 정보 삭제 (새로운 정보로 갱신하기 위함)
+      localStorage.removeItem('email_verification_sent');
+      localStorage.removeItem('email');
+      localStorage.removeItem('temp_password');
+      localStorage.removeItem('email_verified');
+      localStorage.removeItem('tempId');
+      localStorage.removeItem('firebaseAuthUid');
+      
+      // 상태 초기화
+      setEmailSent(false);
+      setShowVerification(false);
+      setVerificationSent(false);
+      setCurrentEmail('');
+      setTempPassword('');
+      setError('');
+      
+      console.log('인증 과정이 재시작됐습니다.');
+    } catch (error) {
+      console.error('인증 재시작 오류:', error);
+      setError('인증 재시작 중 오류가 발생했습니다.');
+    }
+  };
   
   // 이메일 인증 타이머
   useEffect(() => {
@@ -382,184 +448,76 @@ export default function EmailVerificationPage() {
 
   // 이메일 인증 확인
   const checkEmailVerification = async () => {
-    if (!tempUserId) return
+    if (isVerifying || !auth) return;
     
     try {
-      // 현재 인증 상태 갱신
-      await auth.currentUser?.reload()
+      setIsVerifying(true);
       
-      if (auth.currentUser?.emailVerified) {
-        try {
-          // Firestore 사용자 문서 업데이트
-          await updateDoc(doc(db, 'users', tempUserId), {
-            emailVerified: true,
-            signupStep: 'email_verified',
-            updatedAt: serverTimestamp()
-          })
-          
-          // 로컬 스토리지에 인증 상태 저장
-          localStorage.setItem('email_verified', 'true')
-          localStorage.setItem('last_active_time', Date.now().toString())
-          
-          // 인증 완료 상태로 변경
-          setIsVerifying(false)
-          setVerificationSent(false)
-          
-          // 인증 성공 메시지 표시
-          setError('') // 기존 오류 메시지 제거
-          
-          // 1. 회원가입 진행 중임을 나타내는 쿠키 먼저 설정 (3시간 유효)
-          document.cookie = 'signup_in_progress=true; path=/; max-age=10800; SameSite=Lax';
-          
-          // 2. ID 토큰을 직접 가져와서 쿠키에 설정 (auth_token)
-          const idToken = await auth.currentUser.getIdToken(true); // 강제로 새로운 토큰 요청
-          document.cookie = `auth_token=${idToken}; path=/; max-age=${50 * 60}; SameSite=Lax`;
-          // 인증 토큰 설정 후 다시 회원가입 진행 중 쿠키를 설정하여 미들웨어에서 리다이렉션 방지
-          document.cookie = 'signup_in_progress=true; path=/; max-age=10800; SameSite=Lax';
-          
-          // 상태 변화와 쿠키 설정이 완료된 후 충분한 지연 시간을 두고 페이지 이동
-          console.log('인증 완료, 인트로 페이지로 이동 준비 중...');
-          setTimeout(() => {
-            window.location.href = '/signup-v2/intro';
-          }, 2000) // 2초 지연
-        }
-        catch (tokenError) {
-          console.error('토큰 설정 오류:', tokenError);
-          // 토큰 설정에 실패하더라도 인트로 페이지로 이동 시도
-          document.cookie = 'signup_in_progress=true; path=/; max-age=10800; SameSite=Lax';
-          setTimeout(() => {
-            window.location.href = '/signup-v2/intro';
-          }, 2000);
-        }
-      } else {
-        // 인증되지 않은 경우
-        setError('이메일 인증이 완료되지 않았습니다. 메일함을 확인해주세요.')
-        
-        // 타이머가 0이 되면 자동으로 다시 확인
-        if (verificationTimer === 0) {
-          setVerificationTimer(10) // 10초 후 재확인
-        }
-      }
-    } catch (error) {
-      console.error('이메일 인증 확인 중 오류:', error)
-      setError('이메일 인증 확인 중 오류가 발생했습니다. 다시 시도해주세요.')
-    }
-  }
-
-  // 수동으로 인증 확인 요청
-  const handleVerificationCheck = async () => {
-    setIsCheckingVerification(true);
-    setError('');
-    
-    try {
-      // 현재 state가 비어있으면 localStorage에서 값을 가져옴
-      let email = currentEmail || localStorage.getItem('email') || '';
-      let password = tempPassword || localStorage.getItem('temp_password') || '';
-      let userId = tempUserId || localStorage.getItem('tempId') || '';
+      // 현재 로그인된 사용자 가져오기
+      const currentUser = auth.currentUser;
       
-      if (!email || !password) {
-        setError('인증 정보를 찾을 수 없습니다. 다시 시도해주세요.');
-        setIsCheckingVerification(false);
-        return;
-      }
-      
-      let user = auth.currentUser;
-      
-      // 현재 로그인된 사용자가 없으면 로그인 시도
-      if (!user) {
-        try {
-          console.log('인증 확인을 위해 로그인 시도:', email);
-          const credential = await signInWithEmailAndPassword(auth, email, password);
-          user = credential.user;
-        } catch (loginError: any) {
-          console.error('인증 확인을 위한 로그인 실패:', loginError);
-          
-          // 로그인 오류 처리 (인증 정보 불일치, 사용자 없음 등)
-          setError('인증 정보가 만료되었습니다. 인증 이메일을 다시 요청해주세요.');
-          setIsCheckingVerification(false);
+      if (!currentUser) {
+        // 사용자가 로그인되어 있지 않은 경우 재로그인 시도
+        if (currentEmail && tempPassword) {
+          try {
+            await signInWithEmailAndPassword(auth, currentEmail, tempPassword);
+          } catch (error) {
+            console.error('로그인 실패:', error);
+            if (isMountedRef.current) {
+              setError('인증 상태 확인 중 로그인 오류가 발생했습니다. 다시 시도해주세요.');
+              setIsVerifying(false);
+            }
+            return;
+          }
+        } else {
+          if (isMountedRef.current) {
+            setError('인증 정보가 없습니다. 처음부터 다시 시도해주세요.');
+            setIsVerifying(false);
+          }
           return;
         }
       }
       
-      // 현재 인증 상태 새로고침
-      await user.reload();
+      // 사용자 정보 갱신
+      await auth.currentUser?.reload();
       
-      // 이메일 인증 상태 확인
-      if (user.emailVerified) {
-        try {
-          console.log('이메일 인증 확인됨!');
+      // 이메일 인증 여부 확인
+      if (auth.currentUser?.emailVerified) {
+        // 인증 완료 표시
+        localStorage.setItem('email_verified', 'true');
+        localStorage.setItem('last_active_time', Date.now().toString());
+        
+        // 인증 토큰 갱신 및 쿠키 설정
+        const token = await auth.currentUser.getIdToken(true);
+        document.cookie = `auth_token=${token}; path=/; max-age=${50 * 60}; SameSite=Lax`;
+        document.cookie = 'signup_in_progress=true; path=/; max-age=10800; SameSite=Lax';
+        
+        if (isMountedRef.current) {
+          setVerified(true);
           
-          // 1. 리다이렉션 상태 관리를 위한 로컬 스토리지 설정
-          localStorage.setItem('email_verified', 'true');
-          localStorage.setItem('last_active_time', Date.now().toString());
-          localStorage.setItem('firebaseAuthUid', user.uid);
-          localStorage.setItem('current_signup_step', 'email_verified');
-          
-          // 2. Firestore 사용자 문서 업데이트
-          if (userId) {
-            try {
-              await updateDoc(doc(db, 'users', userId), {
-                emailVerified: true,
-                signupStep: 'email_verified',
-                tempUid: user.uid,
-                updatedAt: serverTimestamp()
-              });
-              console.log('Firestore 문서 업데이트 성공:', userId);
-            } catch (updateError) {
-              console.error('Firestore 문서 업데이트 오류:', updateError);
-              // 에러가 발생해도 계속 진행
-            }
-          }
-          
-          // 3. 회원가입 진행 중임을 나타내는 쿠키 먼저 설정 (미들웨어에서 확인)
-          document.cookie = 'signup_in_progress=true; path=/; max-age=10800; SameSite=Lax';
-          console.log('회원가입 진행 중 쿠키 설정 완료');
-          
-          // 4. ID 토큰을 직접 가져와서 쿠키에 설정 (auth_token) - 약간 지연
-          setTimeout(async () => {
-            try {
-              const idToken = await user!.getIdToken(true);
-              // 인증 토큰 설정과 함께 회원가입 진행 중임을 표시 (미들웨어에서 리다이렉션 방지)
-              document.cookie = `auth_token=${idToken}; path=/; max-age=${50 * 60}; SameSite=Lax`;
-              document.cookie = 'signup_in_progress=true; path=/; max-age=10800; SameSite=Lax';
-              console.log('인증 토큰 쿠키 설정 완료');
-              
-              // 성공 메시지 표시
-              alert('이메일 인증이 완료되었습니다! 다음 단계로 이동합니다.');
-              
-              // 5. 모든 설정이 완료된 후 충분한 지연 시간을 두고 페이지 이동
-              console.log('모든 준비 완료, 인트로 페이지로 이동 예정...');
-              setTimeout(() => {
-                console.log('인트로 페이지로 이동 실행');
-                window.location.href = '/signup-v2/intro'; // router.push 대신 직접 이동
-              }, 2000);
-            } catch (tokenError) {
-              console.error('토큰 설정 오류:', tokenError);
-              // 토큰 설정에 실패하더라도 인트로 페이지로 이동 시도
-              console.log('토큰 설정 오류 발생, 인트로 페이지로 이동 시도');
-              document.cookie = 'signup_in_progress=true; path=/; max-age=10800; SameSite=Lax';
-              window.location.href = '/signup-v2/intro';
-            }
-          }, 500);
-        } catch (error) {
-          console.error('인증 처리 중 일반 오류:', error);
-          // 쿠키 설정 및 리다이렉션 시도
-          document.cookie = 'signup_in_progress=true; path=/; max-age=10800; SameSite=Lax';
+          // 인증 완료 후 인트로 페이지로 이동 (타이머 설정)
           setTimeout(() => {
-            window.location.href = '/signup-v2/intro';
-          }, 1000);
+            if (isMountedRef.current) {
+              router.push('/signup-v2/intro');
+            }
+          }, 2000);
         }
       } else {
-        // 인증되지 않은 경우
-        setError('이메일 인증이 완료되지 않았습니다. 메일함을 확인해주세요.');
-        setIsCheckingVerification(false);
+        if (isMountedRef.current) {
+          setError('아직 이메일 인증이 완료되지 않았습니다. 메일함을 확인해주세요.');
+        }
       }
-    } catch (error: any) {
-      console.error('인증 확인 오류:', error);
-      setError('인증 상태 확인 중 오류가 발생했습니다: ' + error.message);
-      setIsCheckingVerification(false);
+    } catch (error) {
+      console.error('이메일 인증 확인 오류:', error);
+      if (isMountedRef.current) {
+        setError('인증 상태 확인 중 오류가 발생했습니다. 다시 시도해주세요.');
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsVerifying(false);
+      }
     }
-  }
+  };
 
   // 이메일 인증 메일 재전송
   const handleResendVerification = async () => {
@@ -577,7 +535,7 @@ export default function EmailVerificationPage() {
       }
       
       // 기존 사용자가 로그인 되어 있으면 로그아웃
-      if (auth.currentUser) {
+      if (auth && auth.currentUser) {
         await signOut(auth);
       }
       
@@ -635,13 +593,15 @@ export default function EmailVerificationPage() {
         document.cookie = 'signup_in_progress=true; path=/; max-age=10800; SameSite=Lax';
         
         // 인증 토큰이 있는 경우에도 회원가입 진행 중 쿠키 함께 설정
-        if (auth.currentUser) {
+        if (auth && auth.currentUser) {
           try {
             const idToken = await auth.currentUser.getIdToken(true);
             document.cookie = `auth_token=${idToken}; path=/; max-age=${50 * 60}; SameSite=Lax`;
             document.cookie = 'signup_in_progress=true; path=/; max-age=10800; SameSite=Lax';
           } catch (tokenError) {
-            console.error('[이메일] 토큰 설정 오류:', tokenError);
+            console.error('토큰 설정 오류:', tokenError);
+            // 토큰 설정 실패 시에도 쿠키 설정 시도
+            document.cookie = 'signup_in_progress=true; path=/; max-age=10800; SameSite=Lax';
           }
         }
         
@@ -780,7 +740,7 @@ export default function EmailVerificationPage() {
             </div>
             
             <button
-              onClick={handleVerificationCheck}
+              onClick={checkVerificationStatus}
               disabled={isCheckingVerification}
               className={`w-full py-3 rounded-lg text-white font-medium text-sm transition-colors ${
                 isCheckingVerification
@@ -822,10 +782,19 @@ export default function EmailVerificationPage() {
                     localStorage.removeItem('firebaseAuthUid');
                     
                     // Firebase 로그아웃
-                    signOut(auth).then(() => {
-                      // 페이지 새로고침
+                    if (auth) {
+                      signOut(auth).then(() => {
+                        // 페이지 새로고침
+                        window.location.href = '/signup-v2/email';
+                      }).catch(err => {
+                        console.error('로그아웃 오류:', err);
+                        // 오류가 있어도 페이지 리로드
+                        window.location.href = '/signup-v2/email';
+                      });
+                    } else {
+                      // auth가 null이면 그냥 페이지 리로드
                       window.location.href = '/signup-v2/email';
-                    });
+                    }
                   }}
                   type="button"
                   className="w-full py-2 border border-red-200 rounded-lg text-red-600 text-sm font-medium hover:bg-red-50"

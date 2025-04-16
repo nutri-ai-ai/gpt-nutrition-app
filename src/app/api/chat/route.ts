@@ -304,12 +304,19 @@ export async function POST(req: Request) {
   try {
     const { message, userInfo, username, conversation } = await req.json();
 
-    // OpenAI 클라이언트 초기화
+    // Firebase 초기화 확인
+    if (!db) {
+      console.error('Firebase Firestore가 초기화되지 않았습니다');
+      return NextResponse.json(
+        { error: 'Firebase 초기화 오류가 발생했습니다. 잠시 후 다시 시도해주세요.' },
+        { status: 500 }
+      );
+    }
+
     const openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY
     });
 
-    // 사용자의 구독 정보 가져오기
     let subscribedProducts: string[] = [];
     if (username) {
       try {
@@ -324,7 +331,6 @@ export async function POST(req: Request) {
       }
     }
 
-    // 영양제 추천 계산
     const supplementRecommendations = recommendSupplements(userInfo);
     
     // 구독 중인 제품은 추천에서 제외

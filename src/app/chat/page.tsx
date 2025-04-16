@@ -14,6 +14,7 @@ import { products, Product } from '@/lib/products';
 import { motion } from "framer-motion";
 import { toast } from "react-hot-toast";
 import { useAuth } from "@/context/auth-context";
+import { onAuthStateChanged } from "firebase/auth";
 
 type Message = { sender: "user" | "gpt"; content: string; timestamp?: string };
 type DosageSchedule = {
@@ -185,6 +186,11 @@ function ChatContent({
       // Firestore에서 사용자 정보 가져오기
       const userId = user.uid;
       console.log("사용자 ID로 프로필 조회:", userId);
+      if (!db) {
+        console.error("Firebase Firestore가 초기화되지 않았습니다");
+        setLoading(false);
+        return;
+      }
       const profileRef = doc(db, 'users', userId);
       const profileSnapshot = await getDoc(profileRef);
       
@@ -277,6 +283,10 @@ function ChatContent({
     // Firestore에 메시지 저장
     if (user) {
       try {
+        if (!db) {
+          console.error("Firebase Firestore가 초기화되지 않았습니다");
+          return;
+        }
         await addDoc(collection(db, 'chats', user.uid, 'messages'), {
           sender: role,
           text: content,
@@ -318,33 +328,31 @@ function ChatContent({
     });
   };
 
-  useEffect(() => {
-    const fetchSubscribedProducts = async () => {
-      if (!storedUid) return;
-      
-      try {
-        const subRef = collection(db, "users", storedUid, "subscriptions");
-        const q = query(subRef, where("status", "==", "active"));
-        const querySnapshot = await getDocs(q);
-        
-        const products: string[] = [];
-        querySnapshot.forEach((doc) => {
-          const data = doc.data();
-          if (data.supplement?.productName) {
-            products.push(data.supplement.productName);
-          }
-        });
-        
-        setSubscribedProducts(products);
-      } catch (error) {
-        console.error("구독 제품 목록 가져오기 실패:", error);
+  const fetchSubscribedProducts = async () => {
+    if (!storedUid) return;
+    
+    try {
+      if (!db) {
+        console.error("Firebase Firestore가 초기화되지 않았습니다");
+        return;
       }
-    };
-
-    if (storedUid) {
-      fetchSubscribedProducts();
+      const subRef = collection(db, "users", storedUid, "subscriptions");
+      const q = query(subRef, where("status", "==", "active"));
+      const querySnapshot = await getDocs(q);
+      
+      const products: string[] = [];
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data.supplement?.productName) {
+          products.push(data.supplement.productName);
+        }
+      });
+      
+      setSubscribedProducts(products);
+    } catch (error) {
+      console.error("구독 제품 목록 가져오기 실패:", error);
     }
-  }, [storedUid]);
+  };
 
   const extractRecommendations = async (reply: string): Promise<RecommendedProduct[]> => {
     const recommendations: RecommendedProduct[] = [];
@@ -473,33 +481,31 @@ function ChatContent({
     }
   };
 
-  useEffect(() => {
-    const fetchUserInfo = async () => {
-      if (!storedUid) return;
-      
-      try {
-        const userDoc = await getDoc(doc(db, 'users', storedUid));
-        if (userDoc.exists()) {
-          const userData = userDoc.data();
-          const userInfo: UserInfo = {
-            username: storedUsername.current || '',
-            name: userData.name || localStorage.getItem("name") || '',
-            gender: userData.gender || localStorage.getItem("gender") || 'male',
-            height: Number(userData.height) || Number(localStorage.getItem("height")) || 170,
-            weight: Number(userData.weight) || Number(localStorage.getItem("weight")) || 70,
-            birthDate: userData.birthDate || localStorage.getItem("birthDate") || '2000-01-01',
-          };
-          setUserInfo(userInfo);
-        }
-      } catch (error) {
-        console.error('사용자 정보 가져오기 실패:', error);
+  const fetchUserInfo = async () => {
+    if (!storedUid) return;
+    
+    try {
+      if (!db) {
+        console.error("Firebase Firestore가 초기화되지 않았습니다");
+        return;
       }
-    };
-
-    if (storedUid) {
-      fetchUserInfo();
+      const userDoc = await getDoc(doc(db, 'users', storedUid));
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        const userInfo: UserInfo = {
+          username: storedUsername.current || '',
+          name: userData.name || localStorage.getItem("name") || '',
+          gender: userData.gender || localStorage.getItem("gender") || 'male',
+          height: Number(userData.height) || Number(localStorage.getItem("height")) || 170,
+          weight: Number(userData.weight) || Number(localStorage.getItem("weight")) || 70,
+          birthDate: userData.birthDate || localStorage.getItem("birthDate") || '2000-01-01',
+        };
+        setUserInfo(userInfo);
+      }
+    } catch (error) {
+      console.error('사용자 정보 가져오기 실패:', error);
     }
-  }, [storedUid]);
+  };
 
   const showProfileMessage = async (profileData: Profile) => {
     if (!profile) {
@@ -545,11 +551,13 @@ ${profile.name || localStorage.getItem("name") || "사용자"}님의 건강상�
       
       setProfileMessageDisplayed(true);
       
-      await addDoc(collection(db, "users", user?.uid || '', "chatLogs"), {
-        role: "assistant",
-        content: profileMsg,
-        timestamp: serverTimestamp(),
-      });
+      if (db && user?.uid) {
+        await addDoc(collection(db, "users", user.uid, "chatLogs"), {
+          role: "assistant",
+          content: profileMsg,
+          timestamp: serverTimestamp(),
+        });
+      }
     } catch (error) {
       console.error("프로필 메시지 표시 중 오류:", error);
     }
@@ -568,6 +576,13 @@ ${profile.name || localStorage.getItem("name") || "사용자"}님의 건강상�
       
       if (!storedUid) {
         console.error('사용자 UID가 없습니다.');
+        setIsDeleting(false);
+        setShowDeleteConfirmModal(false);
+        return;
+      }
+      
+      if (!db) {
+        console.error("Firebase Firestore가 초기화되지 않았습니다");
         setIsDeleting(false);
         setShowDeleteConfirmModal(false);
         return;
@@ -686,6 +701,11 @@ ${profile.name || localStorage.getItem("name") || "사용자"}님의 건강상�
 
     try {
       console.log("Firestore에 메시지 저장 시도:", effectiveUid);
+      if (!db) {
+        console.error("Firebase Firestore가 초기화되지 않았습니다");
+        setLoading(false);
+        return;
+      }
       await addDoc(collection(db, "users", effectiveUid, "chatLogs"), {
         role: "user",
         content: userMessage,
@@ -914,6 +934,12 @@ ${profile.name || localStorage.getItem("name") || "사용자"}님의 건강상�
       }
     }
   }, []);
+
+  useEffect(() => {
+    if (storedUid) {
+      fetchSubscribedProducts();
+    }
+  }, [storedUid]);
 
   const toggleSidebar = () => {
     setIsSidebarOpen(!isSidebarOpen);
