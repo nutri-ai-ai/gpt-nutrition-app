@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, useEffect } from 'react';
 import { doc, updateDoc, serverTimestamp, getDoc, setDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore';
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut as authSignOut, onAuthStateChanged, User as FirebaseUser, updatePassword } from 'firebase/auth';
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut as authSignOut, onAuthStateChanged, User as FirebaseUser, updatePassword, fetchSignInMethodsForEmail } from 'firebase/auth';
 import { db, auth } from '@/firebase/config';
 
 // 사용자 정보 타입 정의
@@ -464,6 +464,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     console.log('계정 생성 시작:', { username, tempId });
     setLoading(true);
     try {
+      // 이메일 중복 검사 로직 수정 - 임시 계정은 제외
+      try {
+        // Firestore에서 이메일 중복 확인 - 임시 계정은 제외
+        const usersRef = collection(db, 'users');
+        const q = query(usersRef, where('email', '==', email));
+        const querySnapshot = await getDocs(q);
+        
+        // 임시 계정이 아닌 다른 계정에서 이메일이 사용 중인지 확인
+        if (querySnapshot.docs.some(doc => 
+            doc.id !== tempId && // 현재 임시 ID와 다른 문서이고
+            !doc.data().tempUid && // 임시 계정이 아니며
+            doc.data().signupStep === 'completed' // 회원가입이 완료된 계정
+        )) {
+          console.log('계정 생성 - 다른 계정에서 이미 사용 중인 이메일:', email);
+          return { 
+            success: false, 
+            error: '이미 사용 중인 이메일입니다. 다른 이메일로 가입하거나 로그인해주세요.' 
+          };
+        }
+      } catch (checkError) {
+        console.error('이메일 중복 확인 중 오류:', checkError);
+        // 오류 발생 시에도 진행 (이전 검증에서 이미 통과했을 수 있음)
+      }
+      
       // 임시 Firestore 문서 가져오기
       const tempUserRef = doc(db, 'users', tempId);
       const tempUserSnap = await getDoc(tempUserRef);
@@ -485,33 +509,131 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const tempPassword = localStorage.getItem('temp_password');
           if (!tempPassword) throw new Error('임시 비밀번호를 찾을 수 없습니다.');
           
-          const credential = await signInWithEmailAndPassword(auth, email, tempPassword);
-          firebaseUser = credential.user;
-          
-          // 사용자가 설정한 새 비밀번호로 업데이트
-          // 주의: 실제 환경에서는 updatePassword를 사용하려면 최근 로그인 필요
-          // 여기서는 방금 로그인했으므로 가능
-          await updatePassword(firebaseUser, password);
-          console.log('기존 계정 비밀번호 업데이트 완료');
+          try {
+            // 먼저 로그아웃을 시도하여 기존 인증 상태 초기화
+            if (auth.currentUser) {
+              await authSignOut(auth);
+            }
+            
+            const credential = await signInWithEmailAndPassword(auth, email, tempPassword);
+            firebaseUser = credential.user;
+            
+            // 사용자가 설정한 새 비밀번호로 업데이트
+            await updatePassword(firebaseUser, password);
+            console.log('기존 계정 비밀번호 업데이트 완료');
+          } catch (loginError: any) {
+            console.error('기존 계정 로그인 실패:', loginError);
+            
+            // 이미 사용 중인 이메일 오류 처리
+            if (loginError.code === 'auth/email-already-in-use') {
+              console.log('이미 사용 중인 이메일 오류 발생');
+              
+              // 이전에 인증했던 계정 정보 확인
+              if (auth.currentUser && auth.currentUser.email === email) {
+                firebaseUser = auth.currentUser;
+                console.log('현재 인증된 사용자 사용');
+              } else {
+                return { 
+                  success: false, 
+                  error: '이미 사용 중인 이메일입니다. 다른 이메일을 사용하거나 로그인해주세요.'
+                };
+              }
+            } else {
+              throw loginError; // 다른 에러는 아래 catch에서 처리
+            }
+          }
         } catch (error) {
           console.error('기존 계정 사용 중 오류:', error);
           // 기존 계정 사용 실패 시 새 계정 생성 시도
+          try {
+            // 먼저 로그아웃을 시도하여 기존 인증 상태 초기화
+            if (auth.currentUser) {
+              await authSignOut(auth);
+            }
+            
+            const userCredential = await createUserWithEmailAndPassword(
+              auth, 
+              email, 
+              password
+            );
+            firebaseUser = userCredential.user;
+          } catch (createError: any) {
+            console.error('새 계정 생성 실패:', createError);
+            if (createError.code === 'auth/email-already-in-use') {
+              // 이미 인증 과정에서 생성된 계정이 있는 경우
+              try {
+                // 기존 인증 계정으로 로그인 시도
+                const tempPassword = localStorage.getItem('temp_password');
+                if (tempPassword) {
+                  const credential = await signInWithEmailAndPassword(auth, email, tempPassword);
+                  firebaseUser = credential.user;
+                  
+                  // 비밀번호 업데이트
+                  await updatePassword(firebaseUser, password);
+                } else {
+                  return { 
+                    success: false, 
+                    error: '이미 사용 중인 이메일입니다. 다른 이메일을 사용하거나 로그인해주세요.'
+                  };
+                }
+              } catch (loginAgainError) {
+                console.error('기존 인증 계정 로그인 시도 실패:', loginAgainError);
+                return { 
+                  success: false, 
+                  error: '인증 정보 처리 중 오류가 발생했습니다. 다시 시도해주세요.'
+                };
+              }
+            } else {
+              throw createError;
+            }
+          }
+        }
+      } else {
+        // 임시 Auth UID가 없는 경우 새 계정 생성
+        try {
+          console.log('Firebase Auth UID가 없어 새 계정 생성');
+          
+          // 먼저 로그아웃을 시도하여 기존 인증 상태 초기화
+          if (auth.currentUser) {
+            await authSignOut(auth);
+          }
+          
           const userCredential = await createUserWithEmailAndPassword(
             auth, 
             email, 
             password
           );
           firebaseUser = userCredential.user;
+        } catch (createError: any) {
+          console.error('새 계정 생성 실패:', createError);
+          if (createError.code === 'auth/email-already-in-use') {
+            // 이미 인증 과정에서 생성된 계정이 있는 경우
+            try {
+              // 기존 인증 계정으로 로그인 시도
+              const tempPassword = localStorage.getItem('temp_password');
+              if (tempPassword) {
+                const credential = await signInWithEmailAndPassword(auth, email, tempPassword);
+                firebaseUser = credential.user;
+                
+                // 비밀번호 업데이트
+                await updatePassword(firebaseUser, password);
+              } else {
+                return { 
+                  success: false, 
+                  error: '이미 사용 중인 이메일입니다. 다른 이메일을 사용하거나 로그인해주세요.'
+                };
+              }
+            } catch (loginAgainError) {
+              console.error('기존 인증 계정 로그인 시도 실패:', loginAgainError);
+              return { 
+                success: false, 
+                error: '인증 정보 처리 중 오류가 발생했습니다. 다시 시도해주세요.'
+              };
+            }
+          } else {
+            throw createError;
+          }
         }
-      } else {
-        // 임시 Auth UID가 없는 경우 새 계정 생성
-        console.log('Firebase Auth UID가 없어 새 계정 생성');
-        const userCredential = await createUserWithEmailAndPassword(
-          auth, 
-          email, 
-          password
-        );
-        firebaseUser = userCredential.user;
       }
 
       // Firebase ID 토큰 가져오기

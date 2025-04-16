@@ -27,6 +27,12 @@ export default function IntroV2Page() {
       
       console.log('[인트로] 인증 세션 체크 시작...');
       
+      // SessionStorage에도 플래그 설정 (localStorage보다 더 안정적일 수 있음)
+      const ssFlag = sessionStorage.getItem('intro_page_loaded');
+      if (!ssFlag) {
+        sessionStorage.setItem('intro_page_loaded', 'true');
+      }
+      
       // 리다이렉션 이미 처리 중인지 확인
       const isRedirecting = localStorage.getItem('intro_redirecting');
       if (isRedirecting === 'true') {
@@ -48,10 +54,31 @@ export default function IntroV2Page() {
       });
       
       // 이메일 인증 정보 부족한 경우 확인
-      if (!emailVerified || !tempId || !lastActiveTime) {
+      if (emailVerified !== 'true' || !tempId || !lastActiveTime) {
         console.log('[인트로] 필수 세션 정보 없음, 이메일 페이지로 리다이렉션');
         if (isMounted) {
-          router.push('/signup-v2/email');
+          // 현재 URL 확인
+          const currentUrl = window.location.pathname;
+          const baseUrl = window.location.origin;
+          console.log(`[인트로] 현재 URL: ${currentUrl}, 리디렉션 시작`);
+          
+          try {
+            // localStorage/sessionStorage 초기화 (충돌 방지)
+            sessionStorage.removeItem('intro_page_loaded');
+            localStorage.removeItem('intro_redirecting');
+            
+            // 절대 URL 사용 (기본 도메인 문제 해결)
+            const redirectUrl = `${baseUrl}/signup-v2/email`;
+            console.log('[인트로] 절대 URL로 리디렉션:', redirectUrl);
+            
+            // 명시적 리디렉션
+            window.location.href = redirectUrl;
+          } catch (e) {
+            console.error('[인트로] 리디렉션 오류:', e);
+            // 오류시 대체 방법
+            document.location.href = '/signup-v2/email';
+          }
+          return;
         }
         return;
       }
@@ -64,7 +91,8 @@ export default function IntroV2Page() {
       if (diffMinutes > 30) {
         console.log('[인트로] 세션 만료, 이메일 페이지로 리다이렉션');
         if (isMounted) {
-          router.push('/signup-v2/email');
+          const baseUrl = window.location.origin;
+          window.location.href = `${baseUrl}/signup-v2/email`;
         }
         return;
       }
@@ -93,7 +121,8 @@ export default function IntroV2Page() {
           console.log('[인트로] 사용자 데이터 없음, 이메일 페이지로 리다이렉션');
           localStorage.removeItem('intro_redirecting');
           if (isMounted) {
-            router.push('/signup-v2/email');
+            const baseUrl = window.location.origin;
+            window.location.href = `${baseUrl}/signup-v2/email`;
           }
           return;
         }
@@ -113,11 +142,14 @@ export default function IntroV2Page() {
         } else {
           // localStorage에 없으면 Firestore에서 가져오기
           const userData = userDoc.data();
-          if (userData.name) {
+          if (userData && userData.name) {
             setName(userData.name);
             localStorage.setItem('signup_name', userData.name);
           }
         }
+        
+        // 성공적으로 진행됨을 SessionStorage에 저장
+        sessionStorage.setItem('from_email_verification', 'true');
         
         // 리다이렉션 플래그 제거
         localStorage.removeItem('intro_redirecting');
