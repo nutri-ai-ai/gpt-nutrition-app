@@ -261,6 +261,11 @@ export default function SurveyPage() {
         
         // 사용자 문서 로드
         setTempUserId(tempId)
+        if (!db) {
+          console.error('Firestore가 초기화되지 않았습니다')
+          router.push('/signup-v2/email')
+          return
+        }
         const userDoc = await getDoc(doc(db, 'users', tempId))
         
         if (!userDoc.exists()) {
@@ -336,6 +341,11 @@ export default function SurveyPage() {
     
     try {
       // 여기까지 입력된 설문 데이터 저장
+      if (!db) {
+        console.error('Firestore가 초기화되지 않았습니다')
+        setError('데이터 저장 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.')
+        return
+      }
       const userRef = doc(db, 'users', tempUserId)
       await updateDoc(userRef, {
         surveyData: surveyData,
@@ -402,6 +412,12 @@ export default function SurveyPage() {
 
       // Firestore에 데이터 저장
       try {
+        if (!db) {
+          console.error('Firestore가 초기화되지 않았습니다')
+          setError('데이터 저장 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.')
+          setIsSubmitting(false)
+          return
+        }
         await updateDoc(doc(db, 'users', tempUserId), {
           healthGoals: allSelections,
           signupStep: 'survey_completed',
@@ -507,6 +523,11 @@ export default function SurveyPage() {
     // 기본 정보 단계가 끝나면 중간 저장
     if (currentStep === 'BASIC_INFO_DISEASE') {
       try {
+        if (!db) {
+          console.error('Firestore가 초기화되지 않았습니다')
+          setError('데이터 저장 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.')
+          return
+        }
         const userRef = doc(db, 'users', tempUserId)
         await updateDoc(userRef, {
           surveyData: {
